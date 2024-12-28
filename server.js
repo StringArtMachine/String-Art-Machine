@@ -197,7 +197,7 @@ app.post('/restart', (req, res) => {
 });
 
 // Start the server
-const ip = '192.168.1.3';  // Or use your laptop's IP address
+const ip = 'localhost';  // Or use your laptop's IP address
 app.listen(5000, ip, () => {
     console.log(`Server running on ${ip}:5000`);
 });
