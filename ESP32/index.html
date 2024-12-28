@@ -116,7 +116,7 @@ let last_pins;
 let listenForKeys = false;
 
 window.onload = function() {
-    const esp32Url = 'http://192.168.1.3:5000'; // Update this with the correct ESP32 URL
+    const esp32Url = 'http://localhost:5000'; // Update this with the correct ESP32 URL
 
     fetch(`${esp32Url}/status`)
         .then(response => {
@@ -409,7 +409,7 @@ function sendDataToESP32(dataString) {
     };
 
     // Send the image and additional data to the ESP32 server
-    fetch('http://192.168.1.3:5000/upload', {
+    fetch('http://localhost:5000/upload', {
        method: 'POST',
        headers: {
            'Content-Type': 'application/json',
