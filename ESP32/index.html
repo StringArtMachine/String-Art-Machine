@@ -437,64 +437,30 @@ function sendDataToESP32(dataString) {
 
 
 function generateGCode() {
-    const yInVal = 28.0; // Desired position Y inside work area
-    const yOutVal = 0.0; // Desired position of Y outside work area
-    const pinCount = 256;
-    const radius = 11.75; // Radius of pins used to calculate thread length
-    let threadLength = 0.0; // The length of each line of string
-    let lineCount = 0; // Total count of lines
-    const radPerDelta = Math.PI / 128;
+    let result = "";
+    let lineNumber = 1;
 
-    let fromPin = 0;
-    let gcode = "";
+    for (let i = 0; i < line_sequence.length - 1; i++) {
+        const first = line_sequence[i];
+        const second = line_sequence[i + 1];
 
-    // Initial G-code setup
-    gcode += "G90\n"; // Absolute positioning mode
-    gcode += "G21\n"; // Metric mode
-    gcode += `G0 Y${yInVal.toFixed(2)}\n`; // Move the needle into the work
+        // Append the line number and first second pair
+        result += `${lineNumber} ${first} ${second}\n`;
 
-    line_sequence.forEach((toPin, index) => {
-        if (index === 0) {
-            fromPin = toPin; // Set the starting pin
-            gcode += `G10 L20 P0 X${fromPin}\n`; // Set the current pin as the start pin
-        } else {
-            let delta = toPin - (fromPin % pinCount);
-
-            if (delta !== 0) {
-                const chordLen = 2.0 * radius * Math.sin((radPerDelta * Math.abs(delta)) / 2.0);
-                threadLength += chordLen;
-            }
-
-            gcode += `; ...Go from ${fromPin} to ${toPin}\n`;
-
-            // Ensure movement doesn't exceed half a turn
-            if (Math.abs(delta) < pinCount / 2) {
-                toPin = fromPin + delta;
-            } else {
-                if (delta > 0) {
-                    toPin = fromPin - (pinCount - Math.abs(delta));
-                } else {
-                    toPin = fromPin + (pinCount - (fromPin % pinCount)) + toPin;
-                }
-            }
-
-            gcode += pinWrapGCode(toPin, yInVal, yOutVal);
-
-            fromPin = toPin;
-            lineCount += 1;
+        // Perform the calculation
+        let calculation = (second - first) * (360 / 256);
+        if (calculation > 180) {
+            calculation -= 360;
         }
-    });
+        calculation *= (1 / 0.009375);
 
-    return gcode;
+        // Append the calculation result
+        result += `${calculation}\n`;
 
-    // Helper function for pin wrapping G-code
-    function pinWrapGCode(pinNumber, yIn, yOut) {
-        let gcode = `G0 X${(pinNumber + 0.5).toFixed(2)} Y${yIn.toFixed(2)}\n`;
-        gcode += `G0 Y${yOut.toFixed(2)}\n`;
-        gcode += `G0 X${(pinNumber - 0.5).toFixed(2)}\n`;
-        gcode += `G0 Y${yIn.toFixed(2)}\n`;
-        return gcode;
+        lineNumber++;
     }
+
+    return result;
 }
 
 
@@ -617,7 +583,7 @@ function onOpenCvReady() {
     });
 }
 </script>
-<script async src="opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+<script async src="https://aadithkichu.github.io/opencv/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/gh/nicolaspanel/numjs@0.15.1/dist/numjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
