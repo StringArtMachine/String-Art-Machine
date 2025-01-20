@@ -67,7 +67,7 @@
 <script type="text/javascript">
 let IMG_SIZE = 500;
 let MAX_LINES = 4000;// 4000;
-let N_PINS = 36*8;
+let N_PINS = 256;
 let MIN_LOOP = 20;
 let MIN_DISTANCE = 20;
 let LINE_WEIGHT = 20;
@@ -115,10 +115,10 @@ let last_pins;
 
 let listenForKeys = false;
 
-window.onload = function() {
-    const esp32Url = 'http://localhost:5000'; // Update this with the correct ESP32 URL
+window.onload = function () {
+    const esp32Url = 'http://192.168.1.184'; // ESP32 URL
 
-    fetch(`${esp32Url}/status`)
+    fetch(`${esp32Url}/machine-state`)
         .then(response => {
             if (!response.ok) {
                 throw new Error('Network response was not ok');
@@ -126,13 +126,13 @@ window.onload = function() {
             return response.json();
         })
         .then(data => {
-            // Check if the data contains progress
-            if (data.progress > 0) {
-                // Machine has existing state, redirect to control page
-                console.log('Existing state found, redirecting...');
-                window.location.href = 'control.html'; // Redirect to control page
+            if (data.fileExists) {
+                // Redirect to control page if preferences file exists
+                console.log('Preferences file exists, redirecting to control page...');
+                window.location.href = 'http://192.168.1.184/control.html';
             } else {
-                console.log('No state found, staying on index page.');
+                // Stay on index page if preferences file does not exist
+                console.log('Preferences file does not exist, staying on index page.');
             }
         })
         .catch(error => {
@@ -141,12 +141,14 @@ window.onload = function() {
 };
 
 
+
 //*******************************
 //      Line Generation
 //*******************************
 
 imgElement.onload = function() {
     listenForKeys = false;
+    console.log(N_PINS) ;
     inputElement.disabled = true ; 
     loadingText.classList.remove("hidden") ;
     showStep(1);
@@ -399,39 +401,30 @@ function proceed() {
 }
 
 function sendDataToESP32(dataString) {
-    // Get the canvas output (final rendered image)
-    const canvas = document.getElementById("canvasOutput2");
-    const imageData = canvas.toDataURL("image/png");  // Get image data as Base64 string
+    console.log('Sending data as plain text:', dataString); // Log the data being sent
 
-    const data = {
-        image: imageData,  // The Base64 encoded image string
-        data: dataString, 
-    };
-
-    // Send the image and additional data to the ESP32 server
-    fetch('http://localhost:5000/upload', {
-       method: 'POST',
-       headers: {
-           'Content-Type': 'application/json',
-       },
-       body: JSON.stringify(data),
-   })
-   .then(response => {
-       if (response.redirected) {
-           // If the response is a redirect, manually handle it
-           window.location.href = response.url; // This will redirect the browser to the control page
-       } else if (!response.ok) {
-           throw new Error('Failed to send data to ESP32');
-       }
-       return response.text();  // Read the response as text, if needed
-   })
-   .then(result => {
-       // Handle the response from the ESP32 if needed
-       console.log('Image and data successfully sent to ESP32:', result);
-   })
-   .catch(error => {
-       console.error('Error sending image and data to ESP32:', error);
-   });
+    fetch('http://192.168.1.184/upload', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/plain', // Use plain text
+        },
+        body: dataString, // Send the raw string
+    })
+    .then(response => {
+        console.log('Response status:', response.status);  // Log the response status
+        
+        if (!response.ok) {
+            throw new Error('Failed to send data to ESP32');
+        }
+        return response.text();
+    })
+    .then(result => {
+        console.log('Data successfully sent to ESP32:', result);
+        window.location.href = 'http://192.168.1.184/control.html';
+    })
+    .catch(error => {
+        console.error('Error sending data to ESP32:', error);
+    });
 }
 
 
@@ -578,6 +571,7 @@ function showStep(id){
 function onOpenCvReady() {
 
     numberOfLines.value = MAX_LINES;
+    console.log('Loaded');
     numberOfLines.addEventListener("keyup", function(event) {
         MAX_LINES = parseInt(event.target.value);
     });
