@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <SPIFFS.h>
+#include <AccelStepper.h>
+#include <Arduino.h>
 
 // Static IP configuration
 IPAddress local_IP(192, 168, 1, 184);  // Change this to the desired static IP
@@ -15,6 +17,11 @@ const char* password = "C8o7m6p5l4e3x21";
 // Create an instance of the web server
 AsyncWebServer server(80);
 Preferences prefs;
+AccelStepper stepper(AccelStepper::DRIVER, 4, 5);
+
+const int stepsPerRevolution = 200;  // Standard motor steps
+const int microsteps = 32;  // Microstep setting
+const int stepsPerMicrostepRevolution = stepsPerRevolution * microsteps;
 
 // Define initial values for machine state
 bool machineRunning = false;
@@ -82,6 +89,8 @@ void setup() {
     Serial.print("Progress: "); Serial.println(progress);
     Serial.print("File exists: "); Serial.println(fileExists);
 
+    stepper.setMaxSpeed(5000);  // Adjust max speed (steps per second)
+    stepper.setAcceleration(10000);  // Adjust acceleration (steps per second squared)
 
   // Serve HTML files
   
@@ -118,7 +127,7 @@ server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
     response->addHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     response->addHeader("Access-Control-Allow-Headers", "Content-Type");
 
-    if (request->contentLength() > 0) {
+        if (request->contentLength() > 0) {
         // Retrieve the plain text body from the request
         String body = request->arg("plain");
         
@@ -143,36 +152,36 @@ server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
         }
         prefs.begin("machine_state", false);
 
-// Initialize machine state in Preferences if not already created
-if (!prefs.getBool("stateInitialized", false)) {
-    prefs.putBool("machineRunning", false);
-    prefs.putInt("totalLines", 100);
-    prefs.putInt("currentLine", 10);
-    prefs.putString("currentMove", "None");
-    prefs.putInt("progress", 0);
-    prefs.putBool("fileExists", true);
-    prefs.putBool("stateInitialized", true); // Mark state as initialized
-    
-    Serial.println("Machine state initialized in Preferences");
-} else {
-    Serial.println("Machine state already exists in Preferences");
-}
-
-
-// Check the state after saving it
-if (prefs.isKey("progress")) {
-    Serial.println("Machine-state key exists in NVS.");
-    Serial.print("Machine Running: ");
-    Serial.println(prefs.getBool("machineRunning", false));
-    Serial.print("Total Lines: ");
-    Serial.println(prefs.getInt("totalLines", 100));
-    // Add more as needed
-} else {
-    Serial.println("Machine-state key does not exist in NVS.");
-}
-
-// End preferences session after all operations
-prefs.end();
+        // Initialize machine state in Preferences if not already created
+        if (!prefs.getBool("stateInitialized", false)) {
+            prefs.putBool("machineRunning", false);
+            prefs.putInt("totalLines", 100);
+            prefs.putInt("currentLine", 10);
+            prefs.putString("currentMove", "None");
+            prefs.putInt("progress", 0);
+            prefs.putBool("fileExists", true);
+            prefs.putBool("stateInitialized", true); // Mark state as initialized
+            
+            Serial.println("Machine state initialized in Preferences");
+        } else {
+            Serial.println("Machine state already exists in Preferences");
+        }
+        
+        
+        // Check the state after saving it
+        if (prefs.isKey("progress")) {
+            Serial.println("Machine-state key exists in NVS.");
+            Serial.print("Machine Running: ");
+            Serial.println(prefs.getBool("machineRunning", false));
+            Serial.print("Total Lines: ");
+            Serial.println(prefs.getInt("totalLines", 100));
+            // Add more as needed
+        } else {
+            Serial.println("Machine-state key does not exist in NVS.");
+        }
+        
+        // End preferences session after all operations
+        prefs.end();
 
 
 
@@ -183,15 +192,6 @@ prefs.end();
         request->send(400, "text/plain", "Missing data");
     }
 });
-
-
-
-
-
-
-
-  
-  
   
   // Simulate machine state for control page
   server.on("/machine-state", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -261,60 +261,60 @@ prefs.end();
     request->send(200, "application/json", response);
   });
 
-  
-  server.on("/move", HTTP_POST, [](AsyncWebServerRequest *request) {
-  if (request->hasParam("direction")) {
-    String direction = request->getParam("direction")->value();
-    
-    // Simulate motor movement
-    if (direction == "cw") {
-      Serial.println("Simulating motor moving clockwise...");
-    } else if (direction == "ccw") {
-      Serial.println("Simulating motor moving counter-clockwise...");
+   server.on("/move", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("direction")) {
+      String direction = request->getParam("direction")->value();
+      
+      if (direction == "cw") 
+        {
+            Serial.println("Moving motor clockwise...");
+            stepper.move(640000); // Set speed for CW
+        } 
+        else if (direction == "ccw") 
+        {
+            Serial.println("Moving motor counter-clockwise...");
+            stepper.move(-640000); // Set speed for CCW
+        }
+
+      // Send response
+      request->send(200, "application/json", "{\"message\":\"Motor move command sent\"}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Direction not provided\"}");
     }
+  });
+
+  server.on("/increment-move", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("direction")) {
+      String direction = request->getParam("direction")->value();
+      
+      // Incremental movement control
+      if (direction == "cw") {
+        Serial.println("Incrementing motor clockwise...");
+        stepper.move(25); // Increment by 640 microsteps (1/10th of a revolution)
+      } else if (direction == "ccw") {
+        Serial.println("Incrementing motor counter-clockwise...");
+        stepper.move(-25); // Decrement by 640 microsteps
+      }
+
+      // Send response
+      request->send(200, "application/json", "{\"message\":\"Motor increment move command sent\"}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Direction not provided\"}");
+    }
+  });
+
+  server.on("/stop-manual-calibration", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Stop the stepper motor
+    Serial.println("Stopping motor...");
+    stepper.stop();
 
     // Send response
-    request->send(200, "application/json", "{\"message\":\"Motor simulated move\"}");
-  } else {
-    request->send(400, "application/json", "{\"error\":\"Direction not provided\"}");
-  }
-});
-
-server.on("/increment-move", HTTP_POST, [](AsyncWebServerRequest *request) {
-  if (request->hasParam("direction")) {
-    String direction = request->getParam("direction")->value();
-    
-    // Simulate incrementing motor move
-    Serial.println("Simulating increment motor move: " + direction);
-
-    // Send response
-    request->send(200, "application/json", "{\"message\":\"Motor simulated increment\"}");
-  } else {
-    request->send(400, "application/json", "{\"error\":\"Direction not provided\"}");
-  }
-});
-
-server.on("/stop-manual-calibration", HTTP_POST, [](AsyncWebServerRequest *request) {
-  // Simulate stopping manual calibration
-  Serial.println("Simulating stopping manual calibration");
-
-  // Send response
-  request->send(200, "application/json", "{\"message\":\"Manual calibration stopped\"}");
-});
+    request->send(200, "application/json", "{\"message\":\"Manual calibration stopped\"}");
+  });
 
 
 }
 
 void loop() {
-  // Simulate the machine's progress
-  if (machineRunning) {
-    linesCompleted++;
-    progress = (linesCompleted * 100) / totalLines;
-    if (linesCompleted >= totalLines) {
-      machineRunning = false;
-      currentMove = "Completed";
-      progress = 100;
-    }
-  }
-  delay(1000);  // Simulate time delay for machine's progress
+  stepper.run();
 }
