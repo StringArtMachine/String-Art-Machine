@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+        <link rel="stylesheet" type="text/css" href="style.css">
+
+        <title>String Art</title>
+    </head>
+<body>
+    <div class="container">
+        <div class="jumbotron" style="padding-bottom: 20px !important;">
+            <h1>String Art Machine</h1>
+            <br/><br/>
+            <div class="row">
+                <div class="col">
+                    <div class="form-group">
+                        <label for="numberOfLines">Number of Lines</label>
+                        <input type="text" class="form-control" id="numberOfLines">
+                    </div>
+                </div>
+            </div>
+
+            <label class="btn btn-primary btn-file">
+                Click Here and select an Image to Start  <input type="file" id="fileInput" style="display: none;">
+            </label>
+        </div>
+
+        <div class="col text-left">
+            <!-- Hidden loading text, will be shown after file selection -->
+            <p id="loadingText" class="hidden">Loading...</p>
+        </div>
+        
+        
+        <div class="row">
+            <div class="col">
+                <div id="step1" class="inputoutput center hidden">
+                    <img class="centerImage" id="imageSrc" alt="No Image" />
+                </div>
+                <div id="step2" class="inputoutput center hidden">
+                    <div class="caption">Cropped and Grayscaled:</div>
+                    <canvas class="centerCanvasMedium" id="canvasOutput" ></canvas>
+                </div>
+                <div id="step3" class="inputoutput center hidden">
+                    <div class="caption">String Art Output:</div>
+                    <div id="drawStatus"></div>
+                    <canvas class="centerCanvasLarge" id="canvasOutput2" ></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col text-left">
+                <button id="retryButton" class="btn btn-warning hidden" onclick="retry()">Retry</button>
+            </div>
+            <div class="col text-right">
+                <button id="proceedButton" class="btn btn-success hidden" onclick="proceed()">Proceed</button>
+            </div>
+        </div>
+
+    </div>
+
+
+
+<script type="text/javascript">
+let IMG_SIZE = 500;
+let MAX_LINES = 4000;// 4000;
+let N_PINS = 256;
+let MIN_LOOP = 20;
+let MIN_DISTANCE = 20;
+let LINE_WEIGHT = 20;
+let FILENAME = "";
+let SCALE = 20;
+let HOOP_DIAMETER = 0.625;
+
+let img;
+
+// set up element variables
+let imgElement = document.getElementById("imageSrc")
+let inputElement = document.getElementById("fileInput");
+inputElement.addEventListener("change", (e) => {
+  imgElement.src = URL.createObjectURL(e.target.files[0]);
+}, false);
+var ctx=document.getElementById("canvasOutput").getContext("2d");
+var ctx2=document.getElementById("canvasOutput2").getContext("2d");
+let drawStatus = document.getElementById("drawStatus");
+let numberOfLines = document.getElementById("numberOfLines");
+const loadingText = document.getElementById("loadingText");
+
+let length;
+var R = {};
+
+//pre initilization
+let pin_coords;
+let center;
+let radius;
+
+let line_cache_y;
+let line_cache_x;
+let line_cache_length;
+let line_cache_weight;
+
+//line variables
+let error;
+let img_result;    
+let result;
+let line_mask;
+    
+let line_sequence;
+let pin;
+let thread_length;
+let last_pins;
+
+let listenForKeys = false;
+
+window.onload = function () {
+    const esp32Url = 'http://192.168.1.184'; // ESP32 URL
+
+    fetch(`${esp32Url}/machine-state`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.fileExists) {
+                // Redirect to control page if preferences file exists
+                console.log('Preferences file exists, redirecting to control page...');
+                window.location.href = 'http://192.168.1.184/control.html';
+            } else {
+                // Stay on index page if preferences file does not exist
+                console.log('Preferences file does not exist, staying on index page.');
+            }
+        })
+        .catch(error => {
+            console.error('Error checking machine state:', error);
+        });
+};
+
+
+
+//*******************************
+//      Line Generation
+//*******************************
+
+imgElement.onload = function() {
+    listenForKeys = false;
+    console.log(N_PINS) ;
+    inputElement.disabled = true ; 
+    loadingText.classList.remove("hidden") ;
+    showStep(1);
+    // Take uploaded picture, square up and put on canvas
+    base_image = new Image();
+    base_image.src = imgElement.src;
+    ctx.canvas.width = IMG_SIZE;
+    ctx.canvas.height = IMG_SIZE;
+    ctx2.canvas.weight = IMG_SIZE * 2;
+    ctx2.canvas.height = IMG_SIZE * 2;
+    ctx.clearRect(0,0, IMG_SIZE, IMG_SIZE);
+
+    var selectedWidth = base_image.width;
+    var selectedHeight = base_image.height;
+    var xOffset = 0;
+    var yOffset = 0;
+    // square crop  center of picture
+    if(base_image.height > base_image.width){
+        selectedWidth = base_image.width;
+        selectedHeight = base_image.width;
+        yOffset = Math.floor((base_image.height - base_image.width) / 2);
+    }else if(base_image.width > base_image.height) {
+        selectedWidth = base_image.height;
+        selectedHeight = base_image.height;
+        xOffset = Math.floor((base_image.width - base_image.height) / 2)
+    }
+
+    ctx.drawImage(base_image, xOffset, yOffset, selectedWidth, selectedHeight, 0, 0, IMG_SIZE, IMG_SIZE);
+    length = IMG_SIZE;
+
+    // make grayscale by averaging the RGB channels.
+    // extract out the R channel because that's all we need and push graysacle image onto canvas
+    var imgPixels = ctx.getImageData(0, 0, IMG_SIZE, IMG_SIZE);
+    R = img_result = nj.ones([IMG_SIZE, IMG_SIZE ]).multiply(0xff);
+    var rdata = [];     
+    for(var y = 0; y < imgPixels.height; y++){
+        for(var x = 0; x < imgPixels.width; x++){
+            var i = (y * 4) * imgPixels.width + x * 4;
+            var avg = (imgPixels.data[i] + imgPixels.data[i + 1] + imgPixels.data[i + 2]) / 3;
+            imgPixels.data[i] = avg; 
+            imgPixels.data[i + 1] = avg; 
+            imgPixels.data[i + 2] = avg;
+            rdata.push(avg);
+        }
+    }
+    R.selection.data = rdata;
+    ctx.putImageData(imgPixels, 0, 0, 0, 0, IMG_SIZE, IMG_SIZE);
+
+    //circle crop canvas
+    ctx.globalCompositeOperation='destination-in';
+    ctx.beginPath();
+    ctx.arc(IMG_SIZE/2,IMG_SIZE/2, IMG_SIZE/2, 0, Math.PI*2);
+    ctx.closePath();
+    ctx.fill();
+
+    // start processing
+    NonBlockingCalculatePins();    
+}
+ 
+function NonBlockingCalculatePins(){
+    // set up necessary variables
+    console.log("Calculating pins...");
+    status.textContent = "Calculating pins...";
+    pin_coords = [];
+    center = length / 2;
+    radius = length / 2 - 1/2
+    let i = 0;
+
+    (function codeBlock(){
+        if(i < N_PINS){
+            angle = 2 * Math.PI * i / N_PINS;
+            pin_coords.push([Math.floor(center + radius * Math.cos(angle)),
+                Math.floor(center + radius * Math.sin(angle))]);
+            i++;
+            setTimeout(codeBlock, 0);
+        } else {
+            console.log('Done Calculating pins');
+            status.textContent = "Done Calculating pins";
+            showStep(2);
+            NonBlockingPrecalculateLines();
+        }
+    })();
+}
+
+function NonBlockingPrecalculateLines(){
+    // set up necessary variables
+    console.log("Precalculating all lines...");
+    status.textContent = "Precalculating all lines...";
+    line_cache_y = Array.apply(null, {length: (N_PINS * N_PINS)});
+    line_cache_x = Array.apply(null, {length: (N_PINS * N_PINS)});
+    line_cache_length = Array.apply(null, {length: (N_PINS * N_PINS)}).map(Function.call, function(){return 0;});
+    line_cache_weight = Array.apply(null, {length: (N_PINS * N_PINS)}).map(Function.call, function(){return 1;});
+    let a = 0;
+
+    (function codeBlock(){
+        if(a < N_PINS){
+            for (b = a + MIN_DISTANCE; b < N_PINS; b++) {
+                x0 = pin_coords[a][0];
+                y0 = pin_coords[a][1];
+            
+                x1 = pin_coords[b][0];
+                y1 = pin_coords[b][1];
+                
+                d = Math.floor(Number(Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0)*(y1 - y0))));
+                xs = linspace(x0, x1, d);
+                ys = linspace(y0, y1, d);
+
+                line_cache_y[b*N_PINS + a] = ys;
+                line_cache_y[a*N_PINS + b] = ys;
+                line_cache_x[b*N_PINS + a] = xs;
+                line_cache_x[a*N_PINS + b] = xs;
+                line_cache_length[b*N_PINS + a] = d;
+                line_cache_length[a*N_PINS + b] = d;
+            }
+            a++;
+            setTimeout(codeBlock, 0);
+        } else {
+            console.log('Done Precalculating Lines');
+            status.textContent = "Done Precalculating Lines";
+            NonBlockingLineCalculator();
+            showStep(3);
+        }
+    })();
+}
+
+function NonBlockingLineCalculator(){
+    // set up necessary variables
+    console.log("Drawing Lines...");
+    status.textContent = "Drawing Lines...";
+    error = nj.ones([IMG_SIZE, IMG_SIZE]).multiply(0xff).subtract(nj.uint8(R.selection.data).reshape(IMG_SIZE, IMG_SIZE));
+    img_result = nj.ones([IMG_SIZE, IMG_SIZE ]).multiply(0xff);    
+    result = nj.ones([IMG_SIZE * SCALE, IMG_SIZE * SCALE]).multiply(0xff);
+    result = new cv.matFromArray(IMG_SIZE * SCALE, IMG_SIZE * SCALE, cv.CV_8UC1, result.selection.data);
+    line_mask = nj.zeros([IMG_SIZE, IMG_SIZE], 'float64');
+    
+    line_sequence = [];
+    pin = 0;
+    line_sequence.push(pin);
+    thread_length = 0;
+    last_pins = [];
+    let l = 0;
+
+    (function codeBlock(){
+        if(l < MAX_LINES){
+            if(l%10 == 0){
+                draw();
+            }
+
+            max_err = -1;
+            best_pin = -1;
+
+            for(offset=MIN_DISTANCE; offset < N_PINS - MIN_DISTANCE; offset++){
+                test_pin = (pin + offset) % N_PINS;
+                if(last_pins.includes(test_pin)){
+                    continue;
+                }else {
+
+                    xs = line_cache_x[test_pin * N_PINS + pin];
+                    ys = line_cache_y[test_pin * N_PINS + pin];
+
+                    line_err = getLineErr(error, ys, xs) * line_cache_weight[test_pin * N_PINS + pin];
+
+                    if( line_err > max_err){
+                        max_err = line_err;
+                        best_pin = test_pin;
+                    }
+                }
+            }
+
+            line_sequence.push(best_pin);
+
+            xs = line_cache_x[best_pin * N_PINS + pin];
+            ys = line_cache_y[best_pin * N_PINS + pin];
+            weight = LINE_WEIGHT * line_cache_weight[best_pin * N_PINS + pin];
+            
+            line_mask = nj.zeros([IMG_SIZE, IMG_SIZE], 'float64');
+            line_mask = setLine(line_mask, ys, xs, weight);
+            error = subtractArrays(error, line_mask);
+
+
+            
+            p = new cv.Point(pin_coords[pin][0] * SCALE, pin_coords[pin][1] * SCALE);
+            p2 = new cv.Point(pin_coords[best_pin][0] * SCALE, pin_coords[best_pin][1] * SCALE);
+            cv.line(result, p, p2, new cv.Scalar(0, 0, 0), 2, cv.LINE_AA, 0);
+
+            x0 = pin_coords[pin][0];
+            y0 = pin_coords[pin][1];
+
+            x1 = pin_coords[best_pin][0];
+            y1 = pin_coords[best_pin][1];
+
+            dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+            thread_length += HOOP_DIAMETER / length * dist;
+
+            last_pins.push(best_pin);
+            if(last_pins.length > 20){
+                last_pins.shift();
+            }
+            pin = best_pin;
+
+            //update status
+            drawStatus.textContent = l + " Lines drawn | " + Math.round((l / MAX_LINES) * 100) + "% complete";
+
+            l++;
+            setTimeout(codeBlock, 0);
+        } else {
+            console.log('Done Drawing Lines');
+            Finalize();
+        }
+    })();
+}
+
+function draw(){
+    let dsize = new cv.Size(IMG_SIZE * 2, IMG_SIZE * 2);
+    let dst = new cv.Mat();
+    cv.resize(result, dst, dsize, 0, 0, cv.INTER_AREA);
+    cv.imshow('canvasOutput2', dst);
+    dst.delete();
+}
+
+function Finalize() {
+    let dsize = new cv.Size(IMG_SIZE * 2, IMG_SIZE * 2);
+    let dst = new cv.Mat();
+    cv.resize(result, dst, dsize, 0, 0, cv.INTER_AREA);
+
+    console.log("complete");
+    drawStatus.textContent = MAX_LINES + " Lines drawn | 100% complete";
+    loadingText.classList.add("hidden");
+
+    cv.imshow('canvasOutput2', dst);
+    console.log(line_sequence);
+    status.textContent = "Complete";
+    dst.delete(); result.delete();
+    window.scrollTo({ top: 5000, left: 0, behavior: 'smooth' });
+    document.getElementById('retryButton').classList.remove('hidden');
+    document.getElementById('proceedButton').classList.remove('hidden');
+}
+
+function retry() {
+    // Reload the page when the "Retry" button is clicked.
+    location.reload();
+}
+
+function proceed() {
+    const gcode = generateGCode() ;
+    console.log(gcode) ;
+
+    // Send the string to the ESP32 and redirect to a new webpage.
+    sendDataToESP32(gcode);
+}
+
+function sendDataToESP32(dataString) {
+    console.log('Sending data as plain text:', dataString); // Log the data being sent
+
+    fetch('http://192.168.1.184/upload', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/plain', // Use plain text
+        },
+        body: dataString, // Send the raw string
+    })
+    .then(response => {
+        console.log('Response status:', response.status);  // Log the response status
+        
+        if (!response.ok) {
+            throw new Error('Failed to send data to ESP32');
+        }
+        return response.text();
+    })
+    .then(result => {
+        console.log('Data successfully sent to ESP32:', result);
+        window.location.href = 'http://192.168.1.184/control.html';
+    })
+    .catch(error => {
+        console.error('Error sending data to ESP32:', error);
+    });
+}
+
+
+
+function generateGCode() {
+    let result = "";
+    let lineNumber = 1;
+
+    for (let i = 0; i < line_sequence.length - 1; i++) {
+        const first = line_sequence[i];
+        const second = line_sequence[i + 1];
+
+        // Append the line number and first second pair
+        result += `${lineNumber} ${first} ${second}\n`;
+
+        // Perform the calculation
+        let calculation = (second - first) * (360 / 256);
+        if (calculation > 180) {
+            calculation -= 360;
+        }
+        calculation *= (1 / 0.009375);
+
+        // Append the calculation result
+        result += `${calculation}\n`;
+
+        lineNumber++;
+    }
+
+    return result;
+}
+
+
+function getLineErr(arr, coords1, coords2){
+    let result = new Uint8Array(coords1.length);
+    for(i=0;i<coords1.length;i++){
+        result[i] = arr.get(coords1[i], coords2[i]);
+    }
+    return getSum(result);
+}
+
+function setLine(arr, coords1, coords2, line){
+    for(i=0;i<coords1.length;i++){
+        arr.set(coords1[i], coords2[i], line);
+    }
+    return arr;
+}
+
+function compareMul(arr1, arr2){
+    let result = new Uint8Array(arr1.length);
+    for(i=0;i<arr1.length;i++){
+        result[i] = (arr1[i] < arr2[i]) * 254 + 1 ;
+    }
+    return result;
+}
+
+function compareAbsdiff(arr1, arr2){
+    let rsult = new Uint8Array(arr1.length);
+    for(i=0;i<arr1.length;i++){
+        rsult[i] = (arr1[i] * arr2[i]);
+    }
+    return rsult;
+}
+
+function subtractArrays(arr1, arr2) {
+    for(i=0; i<arr1.selection.data.length;i++){
+        arr1.selection.data[i] = arr1.selection.data[i] - arr2.selection.data[i]
+        if(arr1.selection.data[i] < 0){
+            arr1.selection.data[i] = 0;
+        }else if (arr1.selection.data[i] > 255){
+            arr1.selection.data[i] = 255;
+        }
+    }
+    return arr1;
+}
+
+function subtractArraysSimple(arr1, arr2) {
+    for(i=0; i<arr1.length;i++){
+        arr1[i] = arr1[i] - arr2[i];
+    }
+    return arr1;
+}
+
+function getSum(arr) {
+    let v = 0;
+    for(i=0;i<arr.length;i++){
+        v = v + arr[i];
+    }
+  return v;
+}
+
+function makeArr(startValue, stopValue, cardinality) {
+  var arr = [];
+  var currValue = startValue;
+  var step = (stopValue - startValue) / (cardinality - 1);
+  for (var i = 0; i < cardinality; i++) {
+    arr.push(Math.round(currValue + (step * i)));
+  }
+  return arr;
+}
+
+function AddRGB(arr1, arr2, arr3){
+    for(i=0;i<arr1.data.length;i++){
+        var avg = (arr1.data[i] + arr2.data[i] + arr3.data[i]);
+        arr1.data[i] = avg;
+    }
+    return arr1;
+}
+
+function linspace(a,b,n) {
+    if(typeof n === "undefined") n = Math.max(Math.round(b-a)+1,1);
+    if(n<2) { return n===1?[a]:[]; }
+    var i,ret = Array(n);
+    n--;
+    for(i=n;i>=0;i--) { ret[i] = Math.floor((i*b+(n-i)*a)/n); }
+    return ret;
+}
+
+function showStep(id){
+    let step1 = document.getElementById("step1");
+    let step2 = document.getElementById("step2");
+    let step3 = document.getElementById("step3");
+
+    switch (id){
+        case 1:
+            step1.classList.remove('hidden');
+            step2.classList.add('hidden');
+            step3.classList.add('hidden');
+            break;
+        case 2:
+            step1.classList.add('hidden');
+            step2.classList.add('hidden');
+            step3.classList.add('hidden');
+            break;
+        case 3:
+            step1.classList.add('hidden');
+            step2.classList.add('hidden');
+            step3.classList.remove('hidden');
+            break;
+        default:
+            break;
+    }
+}
+
+function onOpenCvReady() {
+
+    numberOfLines.value = MAX_LINES;
+    console.log('Loaded');
+    numberOfLines.addEventListener("keyup", function(event) {
+        MAX_LINES = parseInt(event.target.value);
+    });
+}
+</script>
+<script async src="https://aadithkichu.github.io/opencv/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/gh/nicolaspanel/numjs@0.15.1/dist/numjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+</body>
+</html>

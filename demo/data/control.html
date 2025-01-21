@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <title>Control Panel</title>
+    <style>
+        .button-icon {
+            font-size: 20px;
+            margin-right: 10px;
+        }
+        .progress-box {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .hidden {
+            display: none;
+        }
+        .visible {
+            display: block;
+        }
+        .calibration-panel {
+            margin-top: 20px;
+            padding: 20px;
+            border: 2px solid #007bff;
+            border-radius: 5px;
+        }
+        #drillButton {
+            display: block !important;
+            background-color: red !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="jumbotron text-center">
+            <h1>Control Panel</h1>
+        </div>
+
+        <div class="row">
+            <div class="col progress-box">
+                <div class="progress">
+                    <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                </div>
+                <div class="mt-3">
+                    <p>Total Lines: <span id="totalLines">0</span></p>
+                    <p>Current Move: <span id="currentMove">None</span></p>
+                    <p>Lines Completed: <span id="linesCompleted">0</span></p>
+                </div>
+            </div>
+        </div>
+        <div class="col text-center"><br/>
+            <p id="statuselement" class="hidden">Click Start to begin</p>
+        </div>
+        <div class="row text-center justify-content-center">
+            <div class="col-auto">
+                <button id="startResumeButton" class="btn btn-success btn-lg hidden" onclick="startOrResumeMachine()">
+                    <span class="button-icon">&#9658;</span> <span id="startResumeLabel">Start</span>
+                </button>
+            </div>
+            <div class="col-auto">
+                <button id="pauseButton" class="btn btn-danger btn-lg" onclick="stopMachine()" disabled>
+                    <span class="button-icon">&#9209;</span> Pause
+                </button>
+            </div>
+            <div class="col-auto">
+                <button id="restartButton" class="btn btn-warning btn-lg" onclick="restartMachine()">
+                    <span class="button-icon">&#8635;</span> Restart
+                </button>
+            </div>
+            <div class="col-auto">
+                <button id="calibrateButton" class="btn btn-info btn-lg" onclick="showCalibrationPanel()">
+                    <span class="button-icon">&#9874;</span> Calibrate
+                </button>
+            </div>
+            <div class="col-auto">
+                <button id="drillButton" class="btn btn-info btn-lg" onclick="startDrilling()">
+                    <span class="button-icon">&#128295;</span> Drill
+                </button>
+            </div>
+        </div>
+        <div id="calibrationPanel" class="hidden panel calibration-panel">
+            <h3>Calibration Panel</h3>
+        
+            <!-- Auto Calibration Section -->
+            <div id="autoCalibrationSection">
+                <h4>Auto Calibration</h4>
+                <button id="autoCalibrateButton" onclick="autoCalibrate()">Auto Calibrate</button>
+                <p id="autoCalibrateStatus">Status: Not started</p>
+            </div>
+        
+            <!-- Manual Calibration Section -->
+            <div id="manualCalibrationSection">
+                <h4>Manual Calibration</h4>
+        
+                <!-- Manual Calibration Button -->
+                <button id="manualCalibrationButton" onclick="toggleManualControls()">Manual Calibration</button>
+        
+                <!-- Motor Movement Controls -->
+                <div id="manualControls" class="hidden">
+                    <div id="motorMovementGroup">
+                        <h5>Motor Movement</h5>
+                        <button onclick="moveMotor('cw')" class="btn btn-primary">Move CW</button>
+                        <button onclick="stopManualCalibration()" class="btn btn-danger" disabled>Stop</button>
+                        <button onclick="moveMotor('ccw')" class="btn btn-primary">Move CCW</button>
+                    </div>
+
+                    <div id="incrementMovementGroup" style="margin-top: 15px;">
+                        <h5>Increment Movement</h5>
+                        <button onclick="incrementMove('cw')" class="btn btn-secondary">Increment CW</button>
+                        <button onclick="incrementMove('ccw')" class="btn btn-secondary">Increment CCW</button>
+                    </div>
+                </div>
+
+            </div>
+        
+            <!-- Go Back Button -->
+            <button id="goBackButton" onclick="goBack()" style="width: 100%; margin-top: 20px;">Go Back</button>
+        </div>
+        
+    </div>
+    <script>
+        const esp32Url = "http://192.168.1.184"; // ESP32 URL
+        const statusElement = document.getElementById("statuselement");
+        const startResumeButton = document.getElementById("startResumeButton");
+        const startResumeLabel = document.getElementById("startResumeLabel");
+        const calibrationPanel = document.getElementById("calibrationPanel");
+        const autoCalibrateButton = document.getElementById("autoCalibrateButton");
+        const stopContinuousMovementButton = document.getElementById("stopContinuousMovementButton");
+        const goBackButton = document.getElementById("goBackButton");
+        document.getElementById('drillButton').classList.remove('hidden');
+
+        function fetchMachineState() {
+            fetch(`${esp32Url}/machine-state`)
+                .then(response => response.json())
+                .then(data => {
+                    const totalLines = data.totalLines || 0;
+                    const currentMove = data.currentMove || "None";
+                    const linesCompleted = data.linesCompleted || 0;
+                    const progress = data.progress || 0; // Assuming progress is sent in percentage
+        
+                    // Update total lines, current move, and current line
+                    document.getElementById("totalLines").textContent = totalLines;
+                    document.getElementById("currentMove").textContent = currentMove;
+                    document.getElementById("linesCompleted").textContent = linesCompleted;
+        
+                    // Update the progress bar
+                    const progressBar = document.getElementById("progressBar");
+                    progressBar.style.width = `${progress}%`;  // Set width based on the progress
+                    progressBar.setAttribute("aria-valuenow", progress);  // Update the current value for accessibility
+        
+                    // Update the progress text inside the bar
+                    progressBar.textContent = `${progress}%`;
+        
+                    // Show the start/resume button
+                    startResumeButton.classList.remove("hidden");
+                })
+                .catch(error => console.error("Error fetching machine state:", error));
+        }
+        
+
+        function startOrResumeMachine() {
+            const endpoint = "/start-or-resume";  // Same endpoint for both start and resume
+        
+            // Send the request to the same endpoint for both actions
+            fetch(`${esp32Url}${endpoint}`, { method: "POST" })
+                .then(response => {
+                    if (response.ok) {
+                        // Update status based on whether the user pressed "Start" or "Resume"
+                        statusElement.textContent = "Machine is running...";
+                        statusElement.classList.remove("hidden");
+                        startResumeLabel.textContent = "Resume";
+                        startResumeButton.disabled = true;
+                        document.getElementById("pauseButton").disabled = false;
+
+                    } else {
+                        alert("Failed to Start the machine.");
+                    }
+                })
+                .catch(error => console.error("Failed to Start the machine.", error));
+        }
+        
+
+        function stopMachine() {
+            fetch(`${esp32Url}/stop`, { method: "POST" })
+                .then(response => {
+                    if (response.ok) {
+                        statusElement.textContent = "Machine paused.";
+                        // Disable the "Stop" button
+                        document.getElementById("pauseButton").disabled = true;
+
+                        // Enable the "Resume" button
+                        document.getElementById("startResumeButton").disabled = false;
+                    } else {
+                        alert("Failed to pause the machine.");
+                    }
+                })
+                .catch(error => console.error("Error stopping machine:", error));
+        }
+
+        function restartMachine() {
+            if (confirm("Are you sure you want to restart the machine?")) {
+                fetch(`${esp32Url}/restart`, { method: "POST" })
+                    .then(response => {
+                        if (response.ok) {
+                            window.location.href = `${esp32Url}/`;
+                        } else {
+                            alert("Failed to restart the machine.");
+                        }
+                    })
+                    .catch(error => console.error("Error restarting machine:", error));
+            }
+        }
+
+        function showCalibrationPanel() {
+            if (confirm("Are you sure you want to calibrate? The machine will be paused.")) {
+                fetch(`${esp32Url}/stop`, { method: "POST" })
+                    .then(response => {
+                        if (response.ok) {
+                            // Disable Start, Resume, and Restart buttons
+                            document.getElementById("startResumeButton").disabled = true;
+                            document.getElementById("restartButton").disabled = true;
+                            
+                            // Enable the Pause button if machine was running
+                            document.getElementById("pauseButton").disabled = true;
+                            document.getElementById("calibrateButton").disabled = true;
+
+                            
+                            calibrationPanel.classList.remove("hidden");
+                        } else {
+                            alert("Failed to toggle calibration.");
+                        }
+                    })
+                    .catch(error => console.error("Error toggling calibration:", error));
+            }
+        }
+
+        // Function to handle drilling
+        function startDrilling() {
+            const confirmation = confirm("Make sure to switch on the drill. Continue?");
+            if (confirmation) {
+                // Disable all buttons except for the drill button
+                const buttons = [
+                    "startResumeButton",
+                    "pauseButton",
+                    "restartButton",
+                    "calibrateButton",
+                    "drillButton"
+                ];
+                buttons.forEach(buttonId => {
+                    document.getElementById(buttonId).disabled = true;
+                });
+
+                // Show drilling started
+                document.getElementById("statuselement").textContent = "Drilling started";
+                document.getElementById("statuselement").classList.remove("hidden");
+
+                // Send request to ESP32 to start drilling
+                fetch(`${esp32Url}/start-drilling`, {
+                    method: 'POST', // Assuming a POST request to start drilling
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ action: 'start' }) // You can customize the body as needed
+                })
+                .then(response => {
+                    if (response.ok) {
+                        // Start fetching machine state and updating progress
+                        let drillInterval = setInterval(() => {
+                            fetch(`${esp32Url}/machine-state`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    const progress = data.drillprogress || 0; // Assuming progress is sent in percentage
+
+                                    // Update the progress in the status message
+                                    document.getElementById("statuselement").textContent = `Drilling ${progress}%`;
+
+                                    if (progress === 100) {
+                                        clearInterval(drillInterval);
+                                        // Drilling completed
+                                        document.getElementById("statuselement").textContent = "Drilling completed! Click Start to begin.";
+                                        document.getElementById("statuselement").classList.remove("hidden");
+
+                                        // Re-enable all the buttons
+                                        buttons.forEach(buttonId => {
+                                            document.getElementById(buttonId).disabled = false;
+                                        });
+
+                                        // Enable the Start button once drilling is completed
+                                        document.getElementById("startResumeButton").disabled = false;
+
+                                        // Send request to ESP32 to stop drilling
+                                        fetch(`${esp32Url}/stop-drilling`, {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json',
+                                            },
+                                            body: JSON.stringify({ action: 'stop' }) // Send stop action in the request body
+                                        })
+                                        .then(response => {
+                                            if (response.ok) {
+                                                console.log("Drilling stopped successfully");
+                                            } else {
+                                                console.error("Error stopping drilling");
+                                            }
+                                        })
+                                        .catch(error => {
+                                            console.error("Error sending request to stop drilling:", error);
+                                        });
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error("Error fetching drill progress:", error);
+                                    clearInterval(drillInterval); // Stop polling if an error occurs
+                                });
+                        }, 500); // Poll every 500ms
+                    } else {
+                        console.error("Error starting drilling");
+                        document.getElementById("statuselement").textContent = "Error starting drilling";
+                        document.getElementById("statuselement").classList.remove("hidden");
+
+                        // Re-enable all the buttons in case of an error
+                        buttons.forEach(buttonId => {
+                            document.getElementById(buttonId).disabled = false;
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error("Error sending request to start drilling:", error);
+                    document.getElementById("statuselement").textContent = "Error sending request to start drilling";
+                    document.getElementById("statuselement").classList.remove("hidden");
+
+                    // Re-enable all the buttons in case of an error
+                    buttons.forEach(buttonId => {
+                        document.getElementById(buttonId).disabled = false;
+                    });
+                });
+            }
+        }
+
+        function autoCalibrate() {
+            const currentMove = document.getElementById("currentMove").textContent;
+            const needleNumber = parseInt(currentMove.split(" to ")[0]) || 1;
+        
+            if (confirm(`Break and tie the thread to needle number ${needleNumber}. Proceed?`)) {
+                autoCalibrateButton.disabled = true;
+        
+                // Disable all buttons inside the calibration panel
+                const allCalibrationButtons = document.querySelectorAll("#calibrationPanel button");
+                allCalibrationButtons.forEach(button => {
+                    button.disabled = true;
+                });
+        
+                // Update the status
+                document.getElementById("autoCalibrateStatus").textContent = "Status: Starting Auto Calibration...";
+        
+                // Send the POST request to ESP32 to trigger auto calibration
+                fetch(`${esp32Url}/autocalibrate`, { method: "POST" })
+                    .then(response => {
+                        if (response.ok) {
+                            // Start polling the machine state to check calibration progress
+                            const intervalId = setInterval(() => {
+                                fetch(`${esp32Url}/machine-state`)
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        // Check if calibration is complete based on the machine state
+                                        if (!data.isCalibrating) {
+                                            // Calibration is complete
+                                            clearInterval(intervalId);
+        
+                                            // Re-enable the Auto Calibration button and other controls
+                                            autoCalibrateButton.disabled = false;
+                                            allCalibrationButtons.forEach(button => {
+                                                button.disabled = false;  // Enable all buttons inside the calibration panel
+                                            });
+        
+                                            document.getElementById("autoCalibrateStatus").textContent = "Status: Calibration ended"; // Update status
+                                        } else {
+                                            // Update the status while calibrating
+                                            document.getElementById("autoCalibrateStatus").textContent = "Status: Auto Calibration in Progress...";
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error("Error checking calibration status:", error);
+                                        clearInterval(intervalId);
+        
+                                        // Re-enable all buttons inside the calibration panel in case of error
+                                        allCalibrationButtons.forEach(button => {
+                                            button.disabled = false;  // Enable all buttons inside the calibration panel
+                                        });
+        
+                                        alert("Failed to fetch calibration status. Please check the connection.");
+                                    });
+                            }, 500); // Poll every 500ms
+                        } else {
+                            alert("Failed to start auto calibration.");
+                            autoCalibrateButton.disabled = false;
+                            allCalibrationButtons.forEach(button => {
+                                button.disabled = false;  // Re-enable buttons in case the POST request fails
+                            });
+                            document.getElementById("autoCalibrateStatus").textContent = "Status: Auto Calibration Failed.";
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Error starting auto calibration:", error);
+                        autoCalibrateButton.disabled = false;
+                        allCalibrationButtons.forEach(button => {
+                            button.disabled = false;  // Re-enable buttons in case of POST request error
+                        });
+                        document.getElementById("autoCalibrateStatus").textContent = "Status: Auto Calibration Failed.";
+                    });
+            }
+        }
+        
+        
+
+        function goBack() {
+            // Hide the calibration panel
+            calibrationPanel.classList.add("hidden");
+    
+            // Re-enable the Start/Resume, Pause, and Restart buttons
+            document.getElementById("startResumeButton").disabled = false;
+            document.getElementById("pauseButton").disabled = true;
+            document.getElementById("restartButton").disabled = false;
+            document.getElementById("calibrateButton").disabled = false;
+
+        }
+
+        // Function to move motor in a direction
+        function moveMotor(direction) {
+            // Send the move request to the server
+            fetch(`${esp32Url}/move?direction=${direction}`, { method: "POST" })
+                .then(response => {
+                    if (response.ok) {
+                        const manualControlButtons = document.querySelectorAll("#manualControls button");
+                        manualControlButtons.forEach(button => {
+                            button.disabled = true;  // Disable all buttons inside the manual controls
+                        });
+                        document.querySelector('button[onclick="stopManualCalibration()"]').disabled = false;
+                        document.querySelector("#manualCalibrationButton").disabled = true ;
+                    }
+                })
+                .catch(error => {
+                    console.error("Error during manual move:", error);
+                    const manualControlButtons = document.querySelectorAll("#manualControls button");
+                    manualControlButtons.forEach(button => {
+                        button.disabled = false;  // Disable all buttons inside the manual controls
+                    });
+                    document.querySelector('button[onclick="stopManualCalibration()"]').disabled = true;
+                    document.querySelector("#manualCalibrationButton").disabled = false ;
+
+                });
+        }
+
+        // Function to increment motor movement
+        function incrementMove(direction) {
+            fetch(`${esp32Url}/increment-move?direction=${direction}`, { method: "POST" })
+                .then(response => {
+                    if (!response.ok) {
+                        alert("Error while incrementing move.");
+                    }
+                })
+                .catch(error => console.error("Error during increment move:", error));
+        }
+
+        function stopManualCalibration() {
+            fetch(`${esp32Url}/stop-manual-calibration`, { method: "POST" })
+                .then(response => {
+                    if (response.ok) {
+                        const manualControlButtons = document.querySelectorAll("#manualControls button");
+                        manualControlButtons.forEach(button => {
+                            button.disabled = false;  // enable all buttons inside the manual controls
+                        });
+                        document.querySelector('button[onclick="stopManualCalibration()"]').disabled = true;
+                        document.querySelector("#manualCalibrationButton").disabled = false ;
+                    } else {
+                        alert("Error while stopping manual calibration.");
+                    }
+                })
+                .catch(error => console.error("Error during stop:", error));
+        }
+
+        function toggleManualControls() {
+            const calibrationPanel = document.getElementById("calibrationPanel");
+            const manualControls = document.getElementById("manualControls");
+            const toggleButton = document.getElementById("manualCalibrationButton");
+        
+            // Get all the buttons inside the calibrationPanel
+            const calibrationButtons = calibrationPanel.querySelectorAll("button");
+        
+             // Get all the buttons inside manualControls and convert it to an array
+            const manualControlsButtons = Array.from(manualControls.querySelectorAll("button"));
+        
+            // Toggle visibility of the manual controls
+            if (manualControls.classList.contains("hidden")) {
+                manualControls.classList.remove("hidden");
+        
+                // Disable all buttons inside calibrationPanel except those inside manualControls and the toggle button
+                calibrationButtons.forEach(button => {
+                    if (!manualControlsButtons.includes(button) && button !== toggleButton) {
+                        button.disabled = true;
+                    }
+                });
+            } else {
+                manualControls.classList.add("hidden");
+        
+                // Re-enable all buttons inside calibrationPanel
+                calibrationButtons.forEach(button => {
+                    button.disabled = false;
+                });
+            }
+        }
+        
+
+        // Initial fetch to determine start/resume state
+        fetchMachineState();
+
+        // Start polling with a 500ms interval only when the pause button is enabled
+        setInterval(() => {
+            const pauseButton = document.getElementById("pauseButton");
+            if (!pauseButton.disabled) {
+                fetchMachineState(); // Fetch only if the pause button is enabled
+            }
+        }, 500);
+    </script>
+</body>
+</html>
