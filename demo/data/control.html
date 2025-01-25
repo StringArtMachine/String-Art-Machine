@@ -78,14 +78,26 @@
                 </button>
             </div>
             <div class="col-auto">
-                <button id="drillButton" class="btn btn-info btn-lg" onclick="startDrilling()">
+                <button id="drillButton" class="btn btn-info btn-lg" onclick="toggleDrillPanal()">
                     <span class="button-icon">&#128295;</span> Drill
                 </button>
             </div>
         </div>
         <div id="calibrationPanel" class="hidden panel calibration-panel">
             <h3>Calibration Panel</h3>
-        
+            
+            <p></p>
+            <!-- Adjust Servo Section -->
+            <div id="adjustServoSection">
+                <h4>Adjust Servo</h4>
+                <p id="needlePositionLabel">Set the needle position.</p>
+                <button id="needleUpButton" onclick="incrementMove('in')" class="btn btn-primary">Needle Up</button>
+                <button id="setUpNeedlePositionButton" onclick="set('inPosition')" class="btn btn-secondary">Set Up Position</button>
+                <button id="needleDownButton" onclick="incrementMove('out')" class="btn btn-primary">Needle Down</button>
+                <button id="setDownNeedlePositionButton" onclick="set('outPosition')" class="btn btn-secondary">Set Down Position</button>
+            </div>
+            <p></p>
+
             <!-- Auto Calibration Section -->
             <div id="autoCalibrationSection">
                 <h4>Auto Calibration</h4>
@@ -117,9 +129,53 @@
                 </div>
 
             </div>
-        
-            <!-- Go Back Button -->
-            <button id="goBackButton" onclick="goBack()" style="width: 100%; margin-top: 20px;">Go Back</button>
+        </div>
+
+        <div id="drillPanel" class="hidden panel calibration-panel text-center">
+            <h3>Drill Panel</h3>
+            <p></p>
+            <!-- Adjust Servo Section -->
+            <div id="adjustServoSection">
+                <h4>Adjust Servo</h4>
+                <button id="drillUpButton" onclick="incrementMove('up')" class="btn btn-primary">Drill Up</button>
+                <button id="setUpPositionButton" onclick="set('upPosition')" class="btn btn-secondary">Set Up Position</button>
+                <button id="drillDownButton" onclick="incrementMove('down')" class="btn btn-primary">Drill Down</button>
+                <button id="setDownPositionButton" onclick="set('downPosition')" class="btn btn-secondary">Set Down Position</button>
+                <p id="drillPositionLabel">Set the drill position.</p>
+            </div>
+            <p></p>
+            <!-- Manual Control Section -->
+            <div id="manualControlSection" class="hidden">
+                <h4>Manual Control</h4>
+                <div>
+                    <button id="manualCWButton" onclick="moveMotor('cw')" class="btn btn-primary">CW</button>
+                    <button id="manualStopButton" onclick="stopManualCalibration()" class="btn btn-danger" disabled>Stop</button>
+                    <button id="manualCCWButton" onclick="moveMotor('ccw')" class="btn btn-primary">CCW</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button id="smallIncrementCWButton" onclick="incrementMove('cw')" class="btn btn-secondary">Small Increment CW</button>
+                    <button id="smallIncrementCCWButton" onclick="incrementMove('ccw')" class="btn btn-secondary">Small Increment CCW</button>
+                    <button id="largeIncrementCWButton" onclick="incrementMove('lcw')" class="btn btn-secondary">Large Increment CW</button>
+                    <button id="largeIncrementCCWButton" onclick="incrementMove('lccw')" class="btn btn-secondary">Large Increment CCW</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button id="startManualDrillingButton" onclick="startDrilling('man')" class="btn btn-success">Start Manual Drilling</button>
+                    <button id="stopManualDrillingButton" onclick="stopDrilling()" class="btn btn-danger">Stop Manual Drilling</button>
+                </div>
+            </div>
+            <p></p>
+            <!-- Auto Control Section -->
+            <div id="autoControlSection" class="hidden">
+                <h4>Auto Control</h4>
+                <label for="pinInput">Go to Pin (Pin position starts from 0):</label>
+                <input id="pinInput" type="number" min="0" max="256" class="form-control d-inline" style="width: 80px;">
+                <button id="setPinButton" onclick="set(document.getElementById('pinInput').value)" class="btn btn-primary">Set</button>
+                <p id="pinSetLabel" style="margin-top: 10px;">Pin not set</p>
+                <div style="margin-top: 15px;">
+                    <button id="startAutoDrillingButton" onclick="startDrilling('auto')" class="btn btn-success" disabled>Start Auto Drilling</button>
+                    <button id="stopAutoDrillingButton" onclick="stopDrilling()" class="btn btn-danger" disabled>Stop Auto Drilling</button>
+                </div>
+            </div>
         </div>
         
     </div>
@@ -132,6 +188,8 @@
         const autoCalibrateButton = document.getElementById("autoCalibrateButton");
         const stopContinuousMovementButton = document.getElementById("stopContinuousMovementButton");
         const goBackButton = document.getElementById("goBackButton");
+        let isThreadOver = false ; 
+        let shouldCalibrate = false ;
         document.getElementById('drillButton').classList.remove('hidden');
 
         function fetchMachineState() {
@@ -142,6 +200,9 @@
                     const currentMove = data.currentMove || "None";
                     const linesCompleted = data.linesCompleted || 0;
                     const progress = data.progress || 0; // Assuming progress is sent in percentage
+                    const upPosition = data.upPosition || "unset";
+                    const downPosition = data.downPosition || "unset";
+
         
                     // Update total lines, current move, and current line
                     document.getElementById("totalLines").textContent = totalLines;
@@ -155,9 +216,36 @@
         
                     // Update the progress text inside the bar
                     progressBar.textContent = `${progress}%`;
-        
+                    
                     // Show the start/resume button
                     startResumeButton.classList.remove("hidden");
+                     // Check if upPosition and downPosition are set
+                    if (data.upPosition === "set" && data.downPosition === "set") {
+                        // Show both manual and auto control sections
+                        manualControlSection.classList.remove("hidden");
+                        autoControlSection.classList.remove("hidden");
+                    } else {
+                        // Hide both manual and auto control sections
+                        manualControlSection.classList.add("hidden");
+                        autoControlSection.classList.add("hidden");
+                    }
+
+                    if (data.isDrillSet) {
+                        document.getElementById("pinSetLabel").textContent = `Drill ${data.drillPosition} is set.`;
+                        document.getElementById("startAutoDrillingButton").disabled = false;
+                    }
+                    if (data.linesCompleted > 0) {
+                        document.getElementById("drillButton").disabled = true;
+                    }
+                    if (data.isThreadOver) {
+                        showCalibrationPanel() ;
+                        isThreadOver = true ;
+                    }
+                    if (data.shouldCalibrate) 
+                    {
+                        showCalibrationPanel() ;
+                        shouldCalibrate = false ;
+                    }
                 })
                 .catch(error => console.error("Error fetching machine state:", error));
         }
@@ -175,6 +263,9 @@
                         statusElement.classList.remove("hidden");
                         startResumeLabel.textContent = "Resume";
                         startResumeButton.disabled = true;
+                        document.getElementById("restartButton").disabled = true ;
+                        document.getElementById("calibrateButton").disabled = true ;
+                        document.getElementById("drillButton").disabled = true ;
                         document.getElementById("pauseButton").disabled = false;
 
                     } else {
@@ -190,11 +281,11 @@
                 .then(response => {
                     if (response.ok) {
                         statusElement.textContent = "Machine paused.";
-                        // Disable the "Stop" button
                         document.getElementById("pauseButton").disabled = true;
-
-                        // Enable the "Resume" button
                         document.getElementById("startResumeButton").disabled = false;
+                        document.getElementById("restartButton").disabled = false ;
+                        document.getElementById("calibrateButton").disabled = false ;
+                        document.getElementById("drillButton").disabled = true ;
                     } else {
                         alert("Failed to pause the machine.");
                     }
@@ -217,19 +308,31 @@
         }
 
         function showCalibrationPanel() {
-            if (confirm("Are you sure you want to calibrate? The machine will be paused.")) {
-                fetch(`${esp32Url}/stop`, { method: "POST" })
+        const calibrationPanel = document.getElementById("calibrationPanel");
+        
+        if (calibrationPanel.classList.contains("hidden")) {
+            let alert;
+            if (isThreadOver) {
+                alert = "Thread Over! Calibrate after replacing thread. Proceed?" ;
+                isThreadOver = false ;
+            }
+            else if (shouldCalibrate)  {
+                alert = "ESP32 rebooted! Calibration required. Proceed?" ;
+            }
+            else {
+                alert = "Are you sure you want to calibrate?" ;
+            }
+            if (confirm(alert)) {
+                fetch(`${esp32Url}/togglecalibrate`, { method: "POST" })
                     .then(response => {
                         if (response.ok) {
-                            // Disable Start, Resume, and Restart buttons
+                            // Disable buttons
                             document.getElementById("startResumeButton").disabled = true;
                             document.getElementById("restartButton").disabled = true;
-                            
-                            // Enable the Pause button if machine was running
                             document.getElementById("pauseButton").disabled = true;
-                            document.getElementById("calibrateButton").disabled = true;
+                            document.getElementById("drillButton").disabled = true;
 
-                            
+                            // Show the calibration panel
                             calibrationPanel.classList.remove("hidden");
                         } else {
                             alert("Failed to toggle calibration.");
@@ -237,110 +340,16 @@
                     })
                     .catch(error => console.error("Error toggling calibration:", error));
             }
+        } else {
+            // Hide the calibration panel
+            calibrationPanel.classList.add("hidden");
+
+            // Enable buttons (assuming machine is paused)
+            document.getElementById("startResumeButton").disabled = false;
+            document.getElementById("restartButton").disabled = false;
+            document.getElementById("pauseButton").disabled = true;
         }
-
-        // Function to handle drilling
-        function startDrilling() {
-            const confirmation = confirm("Make sure to switch on the drill. Continue?");
-            if (confirmation) {
-                // Disable all buttons except for the drill button
-                const buttons = [
-                    "startResumeButton",
-                    "pauseButton",
-                    "restartButton",
-                    "calibrateButton",
-                    "drillButton"
-                ];
-                buttons.forEach(buttonId => {
-                    document.getElementById(buttonId).disabled = true;
-                });
-
-                // Show drilling started
-                document.getElementById("statuselement").textContent = "Drilling started";
-                document.getElementById("statuselement").classList.remove("hidden");
-
-                // Send request to ESP32 to start drilling
-                fetch(`${esp32Url}/start-drilling`, {
-                    method: 'POST', // Assuming a POST request to start drilling
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ action: 'start' }) // You can customize the body as needed
-                })
-                .then(response => {
-                    if (response.ok) {
-                        // Start fetching machine state and updating progress
-                        let drillInterval = setInterval(() => {
-                            fetch(`${esp32Url}/machine-state`)
-                                .then(response => response.json())
-                                .then(data => {
-                                    const progress = data.drillprogress || 0; // Assuming progress is sent in percentage
-
-                                    // Update the progress in the status message
-                                    document.getElementById("statuselement").textContent = `Drilling ${progress}%`;
-
-                                    if (progress === 100) {
-                                        clearInterval(drillInterval);
-                                        // Drilling completed
-                                        document.getElementById("statuselement").textContent = "Drilling completed! Click Start to begin.";
-                                        document.getElementById("statuselement").classList.remove("hidden");
-
-                                        // Re-enable all the buttons
-                                        buttons.forEach(buttonId => {
-                                            document.getElementById(buttonId).disabled = false;
-                                        });
-
-                                        // Enable the Start button once drilling is completed
-                                        document.getElementById("startResumeButton").disabled = false;
-
-                                        // Send request to ESP32 to stop drilling
-                                        fetch(`${esp32Url}/stop-drilling`, {
-                                            method: 'POST',
-                                            headers: {
-                                                'Content-Type': 'application/json',
-                                            },
-                                            body: JSON.stringify({ action: 'stop' }) // Send stop action in the request body
-                                        })
-                                        .then(response => {
-                                            if (response.ok) {
-                                                console.log("Drilling stopped successfully");
-                                            } else {
-                                                console.error("Error stopping drilling");
-                                            }
-                                        })
-                                        .catch(error => {
-                                            console.error("Error sending request to stop drilling:", error);
-                                        });
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error("Error fetching drill progress:", error);
-                                    clearInterval(drillInterval); // Stop polling if an error occurs
-                                });
-                        }, 500); // Poll every 500ms
-                    } else {
-                        console.error("Error starting drilling");
-                        document.getElementById("statuselement").textContent = "Error starting drilling";
-                        document.getElementById("statuselement").classList.remove("hidden");
-
-                        // Re-enable all the buttons in case of an error
-                        buttons.forEach(buttonId => {
-                            document.getElementById(buttonId).disabled = false;
-                        });
-                    }
-                })
-                .catch(error => {
-                    console.error("Error sending request to start drilling:", error);
-                    document.getElementById("statuselement").textContent = "Error sending request to start drilling";
-                    document.getElementById("statuselement").classList.remove("hidden");
-
-                    // Re-enable all the buttons in case of an error
-                    buttons.forEach(buttonId => {
-                        document.getElementById(buttonId).disabled = false;
-                    });
-                });
-            }
-        }
+    }
 
         function autoCalibrate() {
             const currentMove = document.getElementById("currentMove").textContent;
@@ -415,20 +424,6 @@
                     });
             }
         }
-        
-        
-
-        function goBack() {
-            // Hide the calibration panel
-            calibrationPanel.classList.add("hidden");
-    
-            // Re-enable the Start/Resume, Pause, and Restart buttons
-            document.getElementById("startResumeButton").disabled = false;
-            document.getElementById("pauseButton").disabled = true;
-            document.getElementById("restartButton").disabled = false;
-            document.getElementById("calibrateButton").disabled = false;
-
-        }
 
         // Function to move motor in a direction
         function moveMotor(direction) {
@@ -442,6 +437,22 @@
                         });
                         document.querySelector('button[onclick="stopManualCalibration()"]').disabled = false;
                         document.querySelector("#manualCalibrationButton").disabled = true ;
+                        // Get all buttons inside the drill panel
+                        const drillPanelButtons = document.querySelectorAll("#drillPanel button");
+                        const drillButton = document.getElementById("drillButton");
+
+                        // Disable drillButton
+                        drillButton.disabled = true;
+                        // Loop through all buttons
+                        drillPanelButtons.forEach(button => {
+                            if (button.id === "manualStopButton") {
+                                // Enable only the manualStopButton
+                                button.disabled = false;
+                            } else {
+                                // Disable all other buttons
+                                button.disabled = true;
+                            }
+                        });
                     }
                 })
                 .catch(error => {
@@ -477,6 +488,22 @@
                         });
                         document.querySelector('button[onclick="stopManualCalibration()"]').disabled = true;
                         document.querySelector("#manualCalibrationButton").disabled = false ;
+
+                        const drillButton = document.getElementById("drillButton");
+                        drillButton.disabled = false;
+                        // Get all buttons inside the drill panel
+                        const drillPanelButtons = document.querySelectorAll("#drillPanel button");
+
+                        // Loop through all buttons
+                        drillPanelButtons.forEach(button => {
+                            if (button.id === "manualStopButton") {
+                                // Disable the manualStopButton
+                                button.disabled = true;
+                            } else {
+                                // Enable all other buttons
+                                button.disabled = false;
+                            }
+                        });
                     } else {
                         alert("Error while stopping manual calibration.");
                     }
@@ -515,6 +542,181 @@
             }
         }
         
+        function set(position) {
+            // Ensure position is not empty
+            if (!position || position.trim() === "") {
+                alert("Position cannot be empty.");
+                return;
+            }
+        
+            // Send POST request to set the position
+            fetch(`${esp32Url}/setPosition?position=${position.trim()}`, { method: "POST" })
+                .then(response => {
+                 // Check if the position is a valid number
+                if (!isNaN(position)) {
+                    // Convert position to a number for range check
+                    const positionNumber = parseInt(position);
+
+                    // Check if the position is within the allowed range (0 to 256)
+                    if (positionNumber < 0 || positionNumber > 256) {
+                        const pinSetLabel = document.getElementById("pinSetLabel");
+                        const labelContent = document.getElementById("pinSetLabel").textContent;
+                        pinSetLabel.textContent = "Select a number between 0 and 256";
+
+                        // Revert the label after 5 seconds
+                        setTimeout(() => {
+                            pinSetLabel.textContent = labelContent; // Or set it back to the original label
+                        }, 5000);
+                    } else {
+                        // If the position is a valid number within range, update the button label
+                        const pinSetLabel = document.getElementById("pinSetLabel");
+                        pinSetLabel.textContent = `Pin position set to: ${position}`;
+                        document.getElementById("startAutoDrillingButton").disabled = false;
+            }
+                } else if (position == "upPosition" || position == "downPosition") {
+                    // If position is not a number, update the drillPositionLabel
+                    const drillPositionLabel = document.getElementById("drillPositionLabel");
+                    drillPositionLabel.textContent = `Drill ${position} is set.`;
+
+                    // Revert the label after 5 seconds
+                    setTimeout(() => {
+                        drillPositionLabel.textContent = "Set the drill position.";
+                    }, 5000);
+
+                } else {
+                    const needlePositionLabel = document.getElementById("needlePositionLabel");
+                    needlePositionLabel.textContent = `Needle ${position} is set.`;
+
+                    // Revert the label after 5 seconds
+                    setTimeout(() => {
+                        needlePositionLabel.textContent = "Set the needle position.";
+                    }, 5000);
+                }
+
+            })
+            .catch(error => console.error(`Error setting ${position}:`, error))
+            .finally(() => {
+                // Fetch the machine state to check positions
+            fetch(`${esp32Url}/machine-state`, {
+                method: "GET",
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.upPosition === "set" && data.downPosition === "set") {
+                        // Show both manual and auto control sections
+                        document.getElementById("manualControlSection").classList.remove("hidden");
+                        document.getElementById("autoControlSection").classList.remove("hidden");
+                    } else {
+                        // Hide both sections
+                        document.getElementById("manualControlSection").classList.add("hidden");
+                        document.getElementById("autoControlSection").classList.add("hidden");
+                    }
+                })
+                .catch(error => console.error("Error fetching machine state:", error));
+            });
+        }
+        
+        function toggleDrillPanal() {
+            const drillPanel = document.getElementById("drillPanel");
+            const startResumeButton = document.getElementById("startResumeButton");
+            const pauseButton = document.getElementById("pauseButton");
+            const restartButton = document.getElementById("restartButton");
+            const calibrateButton = document.getElementById("calibrateButton");
+        
+            if (drillPanel.classList.contains("hidden")) {
+                // Alert the user with a message
+                const proceed = confirm(
+                    "Place the workpiece on the wheel properly and make sure it is tightly placed. Make sure to switch on the drill before drilling. Proceed?"
+                );
+        
+                if (proceed) {
+                    // Show the drill panel
+                    drillPanel.classList.remove("hidden");
+        
+                    // Disable the buttons
+                    startResumeButton.disabled = true;
+                    pauseButton.disabled = true;
+                    restartButton.disabled = true;
+                    calibrateButton.disabled = true;
+                }
+            } else {
+                // Hide the drill panel
+                drillPanel.classList.add("hidden");
+        
+                // Enable the buttons
+                startResumeButton.disabled = false;
+                restartButton.disabled = false;
+                calibrateButton.disabled = false;
+            }
+        }
+
+        function startDrilling(type) {
+        
+            // Send POST request to set the position
+            fetch(`${esp32Url}/start-drilling?type=${type.trim()}`, { method: "POST" })
+                .then(response => {
+                if (response.ok) {
+                    console.log(`${type} drilling started successfully.`);
+                    // Get all buttons inside the drill panel
+                    const drillPanelButtons = document.querySelectorAll("#drillPanel button");
+                    const drillButton = document.getElementById("drillButton");
+
+                    // Disable drillButton
+                    drillButton.disabled = true;
+                    // Loop through all buttons
+                    drillPanelButtons.forEach(button => {
+                        if (button.id === "stopManualDrillingButton" && type === "man") {
+                            button.disabled = false; // Enable manual stop button
+                        } else if (button.id === "stopAutoDrillingButton" && type === "auto") {
+                            button.disabled = false; // Enable auto stop button
+                        } else {
+                            button.disabled = true; // Disable other buttons
+                        }
+                    });
+                } else {
+                    alert("Failed to start drilling.");
+                }
+            })
+            .catch(error => {
+                console.error("Error starting drilling:", error);
+            });
+        }
+        
+        function stopDrilling() {
+            // Send the stop request to the server
+            fetch(`${esp32Url}/stop-drilling`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ action: "stop" })
+            })
+            .then(response => {
+                if (response.ok) {
+                    console.log("Drilling stopped successfully.");
+                    const drillButton = document.getElementById("drillButton");
+                    drillButton.disabled = false;
+                    // Get all buttons inside the drill panel
+                    const drillPanelButtons = document.querySelectorAll("#drillPanel button");
+
+                    // Loop through all buttons
+                    drillPanelButtons.forEach(button => {
+                        if (button.id === "stopManualDrillingButton" || button.id === "stopAutoDrillingButton") {
+                            // Disable both the manual and auto stop buttons
+                            button.disabled = true;
+                        } else {
+                            // Enable all other buttons
+                            button.disabled = false;
+                        }
+                    });
+                } else {
+                    alert("Failed to stop drilling.");
+                }
+            })
+            .catch(error => {
+                console.error("Error stopping drilling:", error);
+            });
+        }
 
         // Initial fetch to determine start/resume state
         fetchMachineState();

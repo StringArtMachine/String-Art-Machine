@@ -401,30 +401,67 @@ function proceed() {
 }
 
 function sendDataToESP32(dataString) {
-    console.log('Sending data as plain text:', dataString); // Log the data being sent
+    console.log('Sending data incrementally'); // Log the data being sent
 
-    fetch('http://192.168.1.184/upload', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'text/plain', // Use plain text
-        },
-        body: dataString, // Send the raw string
-    })
-    .then(response => {
-        console.log('Response status:', response.status);  // Log the response status
-        
-        if (!response.ok) {
-            throw new Error('Failed to send data to ESP32');
+    const numberOfLinesInput = document.getElementById("numberOfLines").value;
+    console.log('Number of Lines Input:', numberOfLinesInput);
+
+    // Create a JSON object with the number of lines
+    const jsonData = {
+        numberOfLines: numberOfLinesInput,
+        content: ''
+    };
+
+    // Define chunk size (in characters)
+    const chunkSize = 1024;  // Adjust size as needed, 1024 bytes = 1 KB
+    let currentPosition = 0;
+
+    // Function to send each chunk
+    function sendNextChunk() {
+        if (currentPosition < dataString.length) {
+            // Get the current chunk
+            const chunk = dataString.slice(currentPosition, currentPosition + chunkSize);
+            jsonData.content = chunk;
+
+            console.log(`Sending chunk of size ${chunk.length} bytes`);
+
+            // Send the chunk to the ESP32
+            fetch('http://192.168.1.184/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json', // Set to JSON content
+                },
+                body: JSON.stringify(jsonData) // Convert object to JSON string
+            })
+            .then(response => {
+                console.log('Response status:', response.status);  // Log the response status
+
+                if (!response.ok) {
+                    throw new Error('Failed to send data to ESP32');
+                }
+
+                return response.json();  // Parse the response as JSON
+            })
+            .then(result => {
+                console.log('Chunk sent successfully:', result);
+
+                // Move to the next chunk
+                currentPosition += chunkSize;
+
+                // Recursively send the next chunk
+                sendNextChunk();
+            })
+            .catch(error => {
+                console.error('Error sending chunk to ESP32:', error);
+            });
+        } else {
+            console.log('All data sent successfully.');
+            window.location.href = 'http://192.168.1.184/control.html';  // Redirect to control page
         }
-        return response.text();
-    })
-    .then(result => {
-        console.log('Data successfully sent to ESP32:', result);
-        window.location.href = 'http://192.168.1.184/control.html';
-    })
-    .catch(error => {
-        console.error('Error sending data to ESP32:', error);
-    });
+    }
+
+    // Start sending the first chunk
+    sendNextChunk();
 }
 
 
