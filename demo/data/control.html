@@ -47,8 +47,10 @@
                     <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
                 </div>
                 <div class="mt-3">
+                    <p>Thread Length: <span id="threadlength">0</span></p>
                     <p>Total Lines: <span id="totalLines">0</span></p>
                     <p>Current Move: <span id="currentMove">None</span></p>
+                    <p>Needle Position: <span id="needlePosition">None</span></p>
                     <p>Lines Completed: <span id="linesCompleted">0</span></p>
                 </div>
             </div>
@@ -168,7 +170,7 @@
             <div id="autoControlSection" class="hidden">
                 <h4>Auto Control</h4>
                 <label for="pinInput">Go to Pin (Pin position starts from 0):</label>
-                <input id="pinInput" type="number" min="0" max="256" class="form-control d-inline" style="width: 80px;">
+                <input id="pinInput" type="number" min="0" max="199" class="form-control d-inline" style="width: 80px;">
                 <button id="setPinButton" onclick="set(document.getElementById('pinInput').value)" class="btn btn-primary">Set</button>
                 <p id="pinSetLabel" style="margin-top: 10px;">Pin not set</p>
                 <div style="margin-top: 15px;">
@@ -198,16 +200,20 @@
                 .then(data => {
                     const totalLines = data.totalLines || 0;
                     const currentMove = data.currentMove || "None";
+                    const needlePosition = data.needlePosition || "None" ;
                     const linesCompleted = data.linesCompleted || 0;
                     const progress = data.progress || 0; // Assuming progress is sent in percentage
                     const upPosition = data.upPosition || "unset";
                     const downPosition = data.downPosition || "unset";
+                    const thread = data.threadlength || "0" ;
 
         
                     // Update total lines, current move, and current line
                     document.getElementById("totalLines").textContent = totalLines;
                     document.getElementById("currentMove").textContent = currentMove;
                     document.getElementById("linesCompleted").textContent = linesCompleted;
+                    document.getElementById("needlePosition").textContent = needlePosition;
+                    document.getElementById("threadlength").textContent = thread+" m";
         
                     // Update the progress bar
                     const progressBar = document.getElementById("progressBar");
@@ -236,6 +242,15 @@
                     }
                     if (data.linesCompleted > 0) {
                         document.getElementById("drillButton").disabled = true;
+                    }
+                    if (data.progress==100) {
+                        document.getElementById("statuselement").textContent = "Completed. Press restart for uploading new data :) "
+                        document.getElementById("startResumeButton").disabled = true ;
+                        document.getElementById("calibrateButton").disabled = true ;
+                        document.getElementById("drillButton").disabled = true ;
+                        document.getElementById("pauseButton").disabled = true;
+                        document.getElementById("restartButton").disabled = false ;
+                        clearInterval(intervalId) ;
                     }
                     if (data.isThreadOver) {
                         showCalibrationPanel() ;
@@ -722,12 +737,12 @@
         fetchMachineState();
 
         // Start polling with a 500ms interval only when the pause button is enabled
-        setInterval(() => {
+        const intervalId = setInterval(() => {
             const pauseButton = document.getElementById("pauseButton");
             if (!pauseButton.disabled) {
                 fetchMachineState(); // Fetch only if the pause button is enabled
             }
-        }, 500);
+        }, 1000);
     </script>
 </body>
 </html>

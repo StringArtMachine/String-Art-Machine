@@ -12,13 +12,12 @@
 IPAddress local_IP(192, 168, 1, 184);
 IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
-const char *ssid = "Airtel_COMPLEX";
-const char *password = "C8o7m6p5l4e3x21";
+const char *ssid = "Airtel_Complex";
+const char *password = "air03232";
 
 AsyncWebServer server(80);
 Preferences prefs;
 Ticker updateticker;
-Ticker limitSwitchTicker;
 Ticker motorTicker;
 Ticker drillTicker ;
 Ticker servoTicker ;
@@ -32,15 +31,11 @@ void runDrillDown();
 void runDrillServo();
 void runStepper();
 void calibratestepperControl();
-void checkLimitSwitch();
-
-
-const int threadlimitSwitchPin = 2;
-const int zerolimitSwitchPin = 1;
 
 bool machineRunning = false;
 int totalLines = 100;
 int linesCompleted = 0;
+String needlePosition = "None" ;
 String currentMove = "None";
 int progress = 0;
 
@@ -52,23 +47,25 @@ bool isDrillEndPosition = false ;
 bool isAutoDrill = false ;
 bool isDrilling = false ;
 bool isDrillSet = false ;
+bool check =true ;
 String upPosition = "unset";
 String downPosition = "unset";
 int servodrillPosition=0 ;
 int servoneedlePosition=0 ;
 String inPosition = "unset";
 String outPosition = "unset";
-int in = 180 ;
-int out = 60 ;
+int in = 70 ;
+int out = 0 ;
 int up = 0 ;
 int down = 0 ;
 int maxUp = 0 ;
 int maxDown = 0 ;
-int maxIn=180 ;
+int maxIn=85 ;
 int maxOut =0 ;
 int servo2CurrentPosition = 0 ;
 int servo1CurrentPosition = 0 ;
 int int1, int2, int3;
+String line1 , line2 ;
 
 bool servoMovement1 = false;
 bool servoMovement2 = false;
@@ -81,12 +78,13 @@ bool isStepperRunning = false;
 bool isServoRunning = false ;
 int stepperPosition = 0 ;
 bool fileExists = false;
-int currentLineIndex = 0;
+size_t currentLineIndex = 0;
 unsigned long servoStartTime = millis() ;
 bool isThreadOver = false ;
 bool isZero = false ;
 bool shouldCalibrate = false ;
-
+File file;
+float threadlength=0.0 ;
 
 void setup() {
 
@@ -116,19 +114,22 @@ void setup() {
   if (prefs.isKey("progress")) {
     totalLines = prefs.getInt("totalLines", 100);
     linesCompleted = prefs.getInt("linesCompleted", 0);
+    needlePosition = prefs.getString("needlePosition", "None");
     currentMove = prefs.getString("currentMove", "None");
     progress = prefs.getInt("progress", 0);
-    in = prefs.getInt("in",0);
+    threadlength = prefs.getFloat("threadlength",0.0) ;
+    in = prefs.getInt("in",70);
     out = prefs.getInt("out",0);
+    currentLineIndex = (size_t) prefs.getUInt("lineIndex", 0);
     if (progress>0) shouldCalibrate = true ;
     fileExists = true ;
     Serial.println("Machine state loaded from NVS");
     Serial.print("Total lines: ");
     Serial.println(totalLines);
-    Serial.print("Current move: ");
-    Serial.println(currentMove);
-    Serial.print("Progress: ");
-    Serial.println(progress);
+    Serial.print("linesCompleted: ");
+    Serial.println(linesCompleted);
+    Serial.print("Threadlength: ");
+    Serial.println(threadlength);
   } else {
     Serial.println(
         "Machine state not found in NVS. Default values will be used.");
@@ -136,16 +137,10 @@ void setup() {
   prefs.end();
 
   servo1.attach(27);
-  servo2.attach(8);
-  stepper.setMaxSpeed(4000);
-  stepper.setAcceleration(250);
-  pinMode(threadlimitSwitchPin, INPUT);
-  pinMode(zerolimitSwitchPin, INPUT);
   servo1.write(in) ;
   servo1CurrentPosition = in ;
-  servo2.write(maxUp);
-  servo2CurrentPosition = maxUp ;
-
+  stepper.setMaxSpeed(48);
+  stepper.setAcceleration(24);
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(SPIFFS, "/index.html", "text/html");
@@ -166,7 +161,9 @@ void setup() {
 
 
   server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-
+    
+    servo1.write(in) ;
+    servo1CurrentPosition = in ;
     StaticJsonDocument<1024> jsonDoc;
     DeserializationError error = deserializeJson(jsonDoc, data, len);
     if (error) {
@@ -178,10 +175,12 @@ void setup() {
         return;
     }
     String numberOfLinesString = jsonDoc["numberOfLines"].as<String>();
+    String threadLength = jsonDoc["threadLength"].as<String>();
     String content = jsonDoc["content"].as<String>();
 
 
     totalLines = numberOfLinesString.toInt();
+    threadlength = threadLength.toFloat();
 
 
     if (totalLines <= 0 || content.isEmpty()) {
@@ -194,9 +193,9 @@ void setup() {
         request->send(500, "application/json", "{\"error\": \"SPIFFS initialization failed\"}");
         return;
     }
+    fileExists=true ;
 
-
-    File file = SPIFFS.open("/output.txt", FILE_APPEND);
+    file = SPIFFS.open("/output.txt", FILE_APPEND);
     if (file) {
         file.print(content);
         file.close();
@@ -206,9 +205,6 @@ void setup() {
     } else {
         request->send(500, "application/json", "{\"error\": \"Failed to save data\"}");
     }
-
-    updateticker.attach(30, updatePreferences);
-    limitSwitchTicker.attach_ms(100, checkLimitSwitch);
     
 });
 
@@ -219,6 +215,7 @@ void setup() {
     doc["isThreadOver"] = isThreadOver ;
     doc["fileExists"] = fileExists;
     doc["totalLines"] = totalLines;
+    doc["needlePosition"] = needlePosition;
     doc["currentMove"] = currentMove;
     doc["progress"] = progress;
     doc["drillprogress"] = drillProgress;
@@ -226,6 +223,9 @@ void setup() {
     doc["drillposition"] = drillPosition;
     doc["upPosition"] = upPosition;
     doc["downPosition"] = downPosition;
+    doc["linesCompleted"] = linesCompleted;
+    doc["threadlength"] = threadlength ;
+    doc["lineIndex"] = currentLineIndex ;
 
     String response;
     serializeJson(doc, response);
@@ -237,6 +237,10 @@ void setup() {
 
     machineRunning = true;
     isThreadOver = false ;
+    if (linesCompleted==0) servo1.write(in);
+    servo1CurrentPosition = in ;
+    file =SPIFFS.open("/output.txt", "r+");
+    updateticker.attach(15, updatePreferences);
     request->send(200, "text/plain", "Machine started");
 });
 
@@ -246,6 +250,7 @@ void setup() {
     machineRunning = false;
     isStepperRunning = false ;
     isServoRunning= false ;
+    updateticker.detach();
     request->send(200, "text/plain", "Machine stopped");
   });
 
@@ -255,6 +260,7 @@ void setup() {
     machineRunning = false;
     totalLines = 100;
     linesCompleted = 0;
+    needlePosition= "None" ;
     currentMove = "None";
     progress = 0;
     isDrilling = false;
@@ -267,14 +273,14 @@ void setup() {
     servoneedlePosition=0 ;
     inPosition = "unset";
     outPosition = "unset";
-    in = 0 ;
+    in = 70 ;
     out = 0 ;
     up = 0 ;
     down = 0 ;
     servoMovement1 = false;
     servoMovement2 = false;
     motorMovement1 = false;
-    stepperMovement2 = false;
+    motorMovement2 = false;
     remainingSteps = 0; 
     isStepperRunning = false;
     isServoRunning = false ;
@@ -282,8 +288,13 @@ void setup() {
     fileExists = false;
     currentLineIndex = 0;
     isThreadOver = false ;
+    stepper.setCurrentPosition(0) ;
+    threadlength=0.0 ;
+    
     updateticker.detach();
+    prefs.begin("machine_state", false);
     prefs.clear();
+    prefs.end();
     SPIFFS.remove("/output.txt");
     request->send(
         200, "text/plain",
@@ -301,6 +312,7 @@ void setup() {
     isStepperRunning = false;
     isServoRunning = false;
     shouldCalibrate = false ;
+    stepper.setCurrentPosition(0);
     request->send(200, "text/plain", "Calibration started");
   });
 
@@ -320,10 +332,10 @@ void setup() {
       motorTicker.attach_ms(1,runStepper) ;
       if (direction == "cw") {
         Serial.println("Moving motor clockwise...");
-        stepper.move(-38400);
+        stepper.move(38400);
       } else if (direction == "ccw") {
         Serial.println("Moving motor counter-clockwise...");
-        stepper.move(38400);
+        stepper.move(-38400);
       }
       request->send(200, "application/json",
                     "{\"message\":\"Motor move command sent\"}");
@@ -338,19 +350,22 @@ void setup() {
 
     if (request->hasParam("direction")) {
       String direction = request->getParam("direction")->value();
-      motorTicker.attach_ms(1,runStepper) ;
       if (direction == "cw") {
         Serial.println("Incrementing motor clockwise (small increment)...");
-        stepper.move(-10);
+        stepper.move(1);
+        motorTicker.attach_ms(1,runStepper) ;
       } else if (direction == "ccw") {
           Serial.println("Incrementing motor counter-clockwise (small increment)...");
-          stepper.move(10);
+          stepper.move(-1);
+          motorTicker.attach_ms(1,runStepper) ;
       } else if (direction == "lcw") {
           Serial.println("Incrementing motor clockwise (large increment)...");
-          stepper.move(-150);
+          stepper.move(12);
+          motorTicker.attach_ms(1,runStepper) ;
       } else if (direction == "lccw") {
           Serial.println("Incrementing motor counter-clockwise (large increment)...");
-          stepper.move(150); 
+          stepper.move(-12); 
+          motorTicker.attach_ms(1,runStepper) ;
       } else if (direction == "up") {
           Serial.println("Moving drill up...");
           if ((servo2CurrentPosition+10) >= maxUp) servo2.write(servo2CurrentPosition-10);
@@ -360,27 +375,28 @@ void setup() {
           if ((servo2CurrentPosition+10) <= maxUp)  servo2.write(servo2CurrentPosition+10);
           servo2CurrentPosition+=10;
       } else if (direction == "in") {
-          Serial.println("Moving drill in...");
-          if ((servo1CurrentPosition+10) <= maxIn) {
-            servo1.write(servo1CurrentPosition+10);
-            servo1CurrentPosition+=10 ;
+          if ((servo1CurrentPosition+5) <= maxIn) {
+            servo1.write(servo1CurrentPosition+5);
+            servo1CurrentPosition+=5 ;
           }
 
           else {
             servo1.write(maxIn) ;
             servo1CurrentPosition=maxIn;
           }
+          Serial.println(servo1CurrentPosition);
       } else if (direction == "out") {
           Serial.println("Moving drill out...");
-          if ((servo1CurrentPosition-10)>=maxOut) {
-            servo1.write(servo1CurrentPosition-10);
-            servo1CurrentPosition-=10;
+          if ((servo1CurrentPosition-5)>=maxOut) {
+            servo1.write(servo1CurrentPosition-5);
+            servo1CurrentPosition-=5;
           }
           
           else {
             servo1.write(maxOut) ;
             servo1CurrentPosition=maxOut;
           }
+          Serial.println(servo1CurrentPosition);
           
       }
       request->send(200, "application/json", "{\"message\":\"Motor increment move command sent\"}");
@@ -398,6 +414,8 @@ void setup() {
 
       Serial.println("Stopping motor...");
       motorTicker.detach() ;
+      stepper.stop();
+      stepper.setCurrentPosition(0);
       request->send(200, "application/json",
                     "{\"message\":\"Manual calibration stopped\"}");
     });
@@ -413,7 +431,7 @@ void setup() {
     if (type == "man") {
         servo2.write(up);
         servo2CurrentPosition = up;
-        drillTicker.attach(10, runDrillServo);
+        drillTicker.attach(2, runDrillServo);
         String response = "{\"status\": \"success\", \"message\": \"" + type + " drilling started\"}";
         request->send(200, "application/json", response);
         Serial.println(type + " drilling started");
@@ -494,10 +512,6 @@ server.on("/setPosition", HTTP_POST,
     }
 );
 
-
-
-
-
 }
 
 
@@ -508,20 +522,28 @@ void loop() {
         return;
     }
 
-    File file = SPIFFS.open("/output.txt", "r+");
-    if (!file || !file.seek(currentLineIndex)) {
+   
+    if (!file || !file.seek(currentLineIndex) && check) {
         Serial.println("Error reading file or EOF reached.");
+        check = false ;
         return;
     }
+    if (!check) return ;
 
     if (!motorMovement1) {
         if (!isStepperRunning) {
-            String line1 = file.readStringUntil('\n');
-            String line2 = file.readStringUntil('\n');
-            Serial.print(line1);
-            Serial.print(line2);
-            sscanf(line1.c_str(), "%d %d %d", &int1, &int2, &int3);
+            stepper.setMaxSpeed(48);
+            stepper.setAcceleration(24);
+            line1 = file.readStringUntil('\n');
+            line2 = file.readStringUntil('\n');
+            char boolStr[6];
+            sscanf(line1.c_str(), "%d %d %d %s", &int1, &int2, &int3 , boolStr);
             currentMove = String(int2) + " to " + String(int3);
+            if (strcmp(boolStr, "true") == 0) {
+                needlePosition = "Right";
+            } else if (strcmp(boolStr, "false") == 0) {
+                needlePosition = "left";
+            }
             int steps = line2.toInt();
             remainingSteps = steps - stepper.currentPosition();
             stepper.move(remainingSteps) ;
@@ -532,6 +554,8 @@ void loop() {
             motorMovement1 = true;
             isStepperRunning = false;
             remainingSteps = 0;
+            stepper.runToPosition();
+            stepper.setCurrentPosition(0);
         }
         else {
             stepper.run();
@@ -543,9 +567,9 @@ void loop() {
             servo1.write(out);
             servo1CurrentPosition = out ;
             servoStartTime = millis();
-            servoMoving = true;
+            isServoRunning = true;
         }
-        if (millis() - servoStartTime >= 3000) {
+        if (millis() - servoStartTime >= 1500) {
             servoMovement1 = true;
             isServoRunning = false;
         }
@@ -553,10 +577,10 @@ void loop() {
 
     if (motorMovement1 && servoMovement1 && !motorMovement2) {
         if (!isStepperRunning) {
-            int steps = 150;
-            remainingSteps = steps - stepper.currentPosition();
-            stepper.move(remainingSteps) ;
-            Serial.println("Stepper moved 150");
+            stepper.setMaxSpeed(48);
+            stepper.setAcceleration(24);
+            if (line2.toInt()>0) stepper.move(12) ;
+            else stepper.move(-12) ;
             isStepperRunning=true;
         }
 
@@ -564,6 +588,8 @@ void loop() {
             motorMovement2 = true;
             isStepperRunning = false;
             remainingSteps = 0;
+            stepper.stop();
+            stepper.setCurrentPosition(0);
         }
         else {
             stepper.run();
@@ -577,7 +603,7 @@ void loop() {
             servoStartTime = millis();
             isServoRunning = true;
         }
-        if (millis() - servoStartTime >= 3000) {
+        if (millis() - servoStartTime >= 1500) {
             servoMovement2 = true;
             isServoRunning = false;
         }
@@ -588,42 +614,32 @@ void loop() {
         servoMovement1 = false ;
         motorMovement2 = false ;
         servoMovement2 = false ;
-        currentLineIndex = file.position();
-        linesCompleted++ ;
-        progress = (linesCompleted*100)*totalLines ;
-    }
-
-    file.close();
-  
+        if (!(totalLines == linesCompleted ))linesCompleted++ ;
+        currentLineIndex += line1.length() + line2.length() + 2;
+        progress = (linesCompleted*100)/totalLines ;
+        if (progress==100 && threadlength!=0) threadlength=0 ;
+        if (progress == 100 ) machineRunning = false ;
+    }  
 }
 
 void updatePreferences() {
     if (machineRunning) {
         prefs.begin("machine_state", false);
         prefs.putInt("totalLines", totalLines);
+        prefs.putInt("linesCompleted", linesCompleted);
+        prefs.putString("needlePosition",needlePosition);
         prefs.putString("currentMove", currentMove);
         prefs.putInt("progress", progress);
-        prefs.putInt("in",0);
-        prefs.putInt("out",0);
+        prefs.putInt("in",in);
+        prefs.putInt("out",out);
+        prefs.putFloat("threadlength",threadlength);
+        prefs.putUInt("lineIndex", (uint32_t) currentLineIndex);
+        Serial.println("Preferences updated: ");
+        Serial.println(currentLineIndex);
+        Serial.println(prefs.getUInt("lineIndex", 0)) ;
         prefs.end();
-        Serial.println("Preferences updated:");
     } else {
         Serial.println("Machine is not running. Skipping update.");
-    }
-}
-
-void checkLimitSwitch() {
-    if (digitalRead(threadlimitSwitchPin) == HIGH) {
-        isThreadOver = true;
-        Serial.println("Thread Limit switch activated!");
-    }
-    if (digitalRead(zerolimitSwitchPin) == HIGH) {
-        isZero = true;
-        Serial.println("Zero Limit switch activated!");
-    }
-    else
-    {
-        isZero = false ;
     }
 }
 
@@ -633,14 +649,14 @@ void calibratestepperControl() {
         stepper.stop();
         motorTicker.detach();
         Serial.println("Motor stopped at zero");
-        stepper.move(-1*drillPosition*150) ;
+        stepper.move(-1*drillPosition*192) ;
         motorTicker.attach_ms(100, runStepper) ;
     }
     else if (isZero) {
         stepper.stop();
         motorTicker.detach();
         Serial.println("Motor stopped at zero");
-        stepper.move(-1*int2*150) ;
+        stepper.move(-1*int2*192) ;
         motorTicker.attach_ms(100, runStepper) ;
     }
 }
@@ -654,13 +670,15 @@ void runStepper() {
       isAutoDrill = false ;
       isDrillStartPosition = true ;
     }
-    if (drillCurrentPosition==257) {
+    if (drillCurrentPosition==201) {
       drillTicker.detach() ;
       isDrillEndPosition = true ;
       isDrilling = false ;
     }
     else if (stepper.distanceToGo() == 0) {
       motorTicker.detach();
+      Serial.println("Stepper moved 192") ;
+      stepper.setCurrentPosition(0);
       isDrilling=false ;
     }
 }
@@ -679,7 +697,7 @@ void runDrillDown() {
       servoStartTime = millis();
       isServoRunning = true ;
     }
-    if (millis() - servoStartTime >= 1000) {
+    if (millis() - servoStartTime >= 200) {
         isServoRunning = false ;
         servoTicker.detach();
         servoTicker.attach_ms(100,runDrillUp) ;
@@ -693,11 +711,11 @@ void runDrillUp(){
       servoStartTime = millis();
       isServoRunning = true ;
     }
-    if (millis() - servoStartTime >= 1000) {
+    if (millis() - servoStartTime >= 200) {
         isServoRunning = false ;
         servoTicker.detach();
-        stepper.move(150) ;
-        if (isDrillStartPosition) drillCurrentPosition++ ;
+        stepper.move(192) ;
+        if (isDrillStartPosition && isDrillStartPosition == true ) drillCurrentPosition++ ;
         motorTicker.attach_ms(100, runStepper) ;
     }
 }

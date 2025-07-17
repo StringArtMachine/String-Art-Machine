@@ -66,8 +66,8 @@
 
 <script type="text/javascript">
 let IMG_SIZE = 500;
-let MAX_LINES = 4000;// 4000;
-let N_PINS = 256;
+let MAX_LINES = 3000;// 4000;
+let N_PINS = 200;
 let MIN_LOOP = 20;
 let MIN_DISTANCE = 20;
 let LINE_WEIGHT = 20;
@@ -101,6 +101,7 @@ let line_cache_y;
 let line_cache_x;
 let line_cache_length;
 let line_cache_weight;
+let threadlength = 0 ;
 
 //line variables
 let error;
@@ -237,10 +238,18 @@ function NonBlockingPrecalculateLines(){
     // set up necessary variables
     console.log("Precalculating all lines...");
     status.textContent = "Precalculating all lines...";
-    line_cache_y = Array.apply(null, {length: (N_PINS * N_PINS)});
-    line_cache_x = Array.apply(null, {length: (N_PINS * N_PINS)});
-    line_cache_length = Array.apply(null, {length: (N_PINS * N_PINS)}).map(Function.call, function(){return 0;});
-    line_cache_weight = Array.apply(null, {length: (N_PINS * N_PINS)}).map(Function.call, function(){return 1;});
+        if (!Number.isInteger(N_PINS) || N_PINS <= 0) {
+        console.error("N_PINS is invalid:", N_PINS);
+        return;
+    }
+
+    const totalLines = N_PINS * N_PINS;
+    console.log("Creating cache arrays of size:", totalLines);
+
+    line_cache_y = new Array(N_PINS * N_PINS);
+    line_cache_x = new Array(N_PINS * N_PINS);
+    line_cache_length = new Array(N_PINS * N_PINS).fill(0);
+    line_cache_weight = new Array(N_PINS * N_PINS).fill(1);
     let a = 0;
 
     (function codeBlock(){
@@ -280,8 +289,10 @@ function NonBlockingLineCalculator(){
     status.textContent = "Drawing Lines...";
     error = nj.ones([IMG_SIZE, IMG_SIZE]).multiply(0xff).subtract(nj.uint8(R.selection.data).reshape(IMG_SIZE, IMG_SIZE));
     img_result = nj.ones([IMG_SIZE, IMG_SIZE ]).multiply(0xff);    
-    result = nj.ones([IMG_SIZE * SCALE, IMG_SIZE * SCALE]).multiply(0xff);
-    result = new cv.matFromArray(IMG_SIZE * SCALE, IMG_SIZE * SCALE, cv.CV_8UC1, result.selection.data);
+    let totalSize = IMG_SIZE * SCALE * IMG_SIZE * SCALE;
+    let data = new Uint8Array(totalSize).fill(255);
+    result = new cv.matFromArray(IMG_SIZE * SCALE, IMG_SIZE * SCALE, cv.CV_8UC1, data);
+
     line_mask = nj.zeros([IMG_SIZE, IMG_SIZE], 'float64');
     
     line_sequence = [];
@@ -409,6 +420,7 @@ function sendDataToESP32(dataString) {
     // Create a JSON object with the number of lines
     const jsonData = {
         numberOfLines: numberOfLinesInput,
+        threadLength: Math.round(threadlength),
         content: ''
     };
 
@@ -469,27 +481,43 @@ function sendDataToESP32(dataString) {
 function generateGCode() {
     let result = "";
     let lineNumber = 1;
+    let cameFromCW = true ;
+    let cameFromCCW = false ;
 
     for (let i = 0; i < line_sequence.length - 1; i++) {
         const first = line_sequence[i];
         const second = line_sequence[i + 1];
 
         // Append the line number and first second pair
-        result += `${lineNumber} ${first} ${second}\n`;
+        result += `${lineNumber} ${first} ${second} ${cameFromCW}\n`;
 
         // Perform the calculation
-        let calculation = (second - first) * (360 / 256);
-        if (calculation > 180) {
-            calculation -= 360;
+        let calculation = (first-second) * 12;
+        if (Math.abs(calculation) > 1200) {
+            if (calculation>0) calculation -= 2400;
+            else calculation+=2400 ;
         }
-        calculation *= (1 / 0.009375);
-
-        // Append the calculation result
+        if (cameFromCW) {
+            if (calculation>0) calculation-=12 ;
+            else {
+                cameFromCW = false ;
+                cameFromCCW = true ;
+            }
+        }
+        else if (cameFromCCW) {
+            if (calculation>0) {
+                cameFromCW = true ;
+                cameFromCCW = false ;
+            }
+            else calculation+=12 ;
+        }
         result += `${calculation}\n`;
 
+        // Append the calculation result
+        threadlength+= 2*30*Math.sin((Math.PI / 180)*(180/200)*(Math.abs(second-first))) ;
         lineNumber++;
     }
-
+    threadlength/=100 ;
     return result;
 }
 
